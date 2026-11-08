@@ -85,10 +85,6 @@ impl Overlay {
         rects: Vec<Rect>,
         restore: bool,
     ) -> tauri::Result<()> {
-        // Restoring at startup only on layer-shell: in fallback mode, GNOME
-        // gives the first map its default size and placement (#18). There,
-        // pinned panels come back on the first summon instead.
-        let restore = restore && self.mode == Mode::LayerShell;
         self.transition(window, |inner| {
             inner.pinned = rects;
             let has_pinned = !inner.pinned.is_empty();
@@ -150,8 +146,16 @@ impl Overlay {
                 if self.mode == Mode::Fallback && previous == Visibility::Summoned {
                     remap_unfocused(window)?;
                 } else if previous == Visibility::Hidden {
-                    // Saved layout restored at startup (layer-shell only).
-                    window.show()?;
+                    // Saved layout restored at startup.
+                    if self.mode == Mode::Fallback {
+                        // Unfocusable from the start: pinned panels never
+                        // take the keyboard in fallback mode.
+                        window.set_focusable(false)?;
+                        window.show()?;
+                        cover_monitor(window)?;
+                    } else {
+                        window.show()?;
+                    }
                 }
                 set_input_region(window, Some(pinned))?;
                 // Coming from summoned, the overlay still holds the keyboard:
@@ -301,9 +305,22 @@ fn remap_unfocused<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<()> {
 /// non-resizable window. Not `set_fullscreen()`: GNOME paints black behind
 /// fullscreen windows, which kills the transparency.
 fn cover_monitor<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<()> {
-    let monitor = match window.current_monitor()? {
+    // A window that was never shown has no current monitor, and Wayland has
+    // no primary monitor: fall back to the first one rather than do nothing.
+    let current = window.current_monitor()?;
+    let primary = if current.is_none() {
+        window.primary_monitor()?
+    } else {
+        None
+    };
+    eprintln!(
+        "[mon] current={} primary={}",
+        current.is_some(),
+        primary.is_some()
+    );
+    let monitor = match current.or(primary) {
         Some(monitor) => Some(monitor),
-        None => window.primary_monitor()?,
+        None => window.available_monitors()?.into_iter().next(),
     };
     if let Some(monitor) = monitor {
         window.set_position(*monitor.position())?;
