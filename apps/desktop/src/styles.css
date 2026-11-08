@@ -1,0 +1,122 @@
+/* Tokens from the "Encre" design direction. Fonts are not embedded yet (spike). */
+:root {
+  color-scheme: dark;
+  --veil: rgba(11, 12, 17, 0.38);
+  --glass: rgba(20, 22, 30, 0.72);
+  --surface: rgba(16, 18, 25, 0.84);
+  --surface-raised: rgba(230, 234, 242, 0.06);
+  --border: rgba(230, 234, 242, 0.08);
+  --border-strong: rgba(230, 234, 242, 0.15);
+  --rim: rgba(230, 234, 242, 0.2);
+  --text: #e6eaf2;
+  --text-2: #a2a6b4;
+  --font: 'Gothic A1', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: transparent;
+  color: var(--text);
+  font: 12px/1.5 var(--font);
+  user-select: none;
+}
+
+.veil {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  background: var(--veil);
+  animation: appear 0.14s ease-out;
+}
+
+.glass {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-top-color: var(--rim);
+  border-left-color: var(--rim);
+  background: var(--surface);
+  border-radius: 18px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(20px) saturate(1.1);
+}
+
+.panel {
+  width: 360px;
+}
+
+.panel__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  padding: 0 14px;
+  background: var(--glass);
+  border-bottom: 1px solid var(--border);
+}
+
+.panel__title {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.panel__body {
+  padding: 14px 16px 16px;
+}
+
+.panel__body p {
+  margin: 0 0 12px;
+  color: var(--text-2);
+}
+
+.keys {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 12px;
+  align-items: center;
+  margin: 0;
+}
+
+.keys dd {
+  margin: 0;
+  color: var(--text-2);
+}
+
+kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  font: 11px var(--font-mono);
+}
+
+.mono {
+  font: 11px var(--font-mono);
+  color: var(--text-2);
+}
+
+@keyframes appear {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .veil {
+    animation-name: fade;
+  }
+  @keyframes fade {
+    from {
+      opacity: 0;
+    }
+  }
+}
