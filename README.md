@@ -41,8 +41,13 @@ Save several layouts ("Work", "Game") and bind them to the app in the foreground
 
 ## Platforms
 
-Linux first (X11, and Wayland through layer-shell on Hyprland, KDE, Sway, niri; GNOME is uncertain), Windows next.
-macOS is out of scope for now.
+Linux first, Windows next. macOS is out of scope for now.
+
+| Desktop                                    | Overlay                                 | Notes                                                                                                                          |
+| ------------------------------------------ | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Hyprland, KDE Plasma, Sway, niri (Wayland) | Layer-shell surface above everything    | Full support                                                                                                                   |
+| X11                                        | Always-on-top window                    | Bind `overquid toggle` in your window manager                                                                                  |
+| GNOME (Wayland)                            | Always-on-top window, below the top bar | No layer-shell, so it may not stay above a fullscreen game. Bind `overquid toggle` as a custom shortcut in Settings › Keyboard |
 
 ## Stack
 
