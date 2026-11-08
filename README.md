@@ -8,7 +8,6 @@ A universal desktop overlay you summon with a hotkey, on top of anything: a game
 The core is a thin shell. Everything inside it is a plugin.
 
 > **Status: early development.** The repository foundations are in place; the app itself does not exist yet.
-> Follow the [roadmap](docs/PLAN.md#roadmap).
 
 ## Why
 
