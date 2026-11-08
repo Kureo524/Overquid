@@ -2340,6 +2340,7 @@ version = "0.0.0"
 dependencies = [
  "gtk",
  "gtk-layer-shell",
+ "percent-encoding",
  "serde",
  "serde_json",
  "tauri",

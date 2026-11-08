@@ -1,0 +1,7 @@
+{
+  "id": "dev.overquid.spike",
+  "name": "Isolation spike",
+  "version": "0.0.0",
+  "entry": "index.html",
+  "network": ["api.github.com"]
+}

@@ -148,6 +148,14 @@ kbd {
   color: var(--text-2);
 }
 
+.plugin-frame {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+}
+
 .big-number {
   margin: 0;
   font: 600 26px/1.2 var(--font-num);

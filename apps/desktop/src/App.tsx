@@ -12,19 +12,34 @@ import {
   type Rect,
 } from './overlay';
 import { Panel } from './Panel';
+import { PluginFrame } from './PluginFrame';
+import { listPlugins, startBroker, type PluginManifest } from './plugins';
 
 const modeLabel: Record<OverlayMode, string> = {
   'layer-shell': 'Wayland layer-shell',
   fallback: 'Always-on-top window',
 };
 
-type PanelId = 'welcome' | 'clock';
+type PanelId = 'welcome' | 'clock' | 'plugins';
 
 /** Where panels go until the user moves them: welcome centred, clock top right. */
 const defaults: Record<PanelId, PanelLayout> = {
   welcome: { placement: { h: 'center', v: 'center', dx: 0, dy: 0 }, pinned: false },
   clock: { placement: { h: 'right', v: 'top', dx: 16, dy: 16 }, pinned: false },
+  plugins: { placement: { h: 'left', v: 'top', dx: 16, dy: 16 }, pinned: false },
 };
+
+/** Spike (ADR 0003): installed plugins, shown in one test panel. */
+function usePlugins(): PluginManifest[] {
+  const [plugins, setPlugins] = useState<PluginManifest[]>([]);
+  useEffect(() => startBroker(), []);
+  useEffect(() => {
+    listPlugins().then(setPlugins, (error: unknown) =>
+      console.error('Cannot list plugins:', error),
+    );
+  }, []);
+  return plugins;
+}
 
 /** Window size. The window is created hidden, at a temporary size, so
  * positions must follow it rather than be computed once at load. */
@@ -73,6 +88,7 @@ export function App() {
   const { mode, visibility } = useOverlayStatus();
   const viewport = useViewport();
   const [layout, updateLayout] = useLayout();
+  const plugins = usePlugins();
   const lastRegions = useRef<Rect[] | null>(null);
   const restorePending = useRef(true);
 
@@ -146,6 +162,13 @@ export function App() {
             </dt>
             <dd>Show or close from any hotkey</dd>
           </dl>
+        </Panel>
+      )}
+      {plugins.length > 0 && visible('plugins') && (
+        <Panel title="Plugins (spike)" width={360} {...panelProps('plugins')}>
+          {plugins.map((plugin) => (
+            <PluginFrame key={plugin.id} plugin={plugin} height={220} />
+          ))}
         </Panel>
       )}
       {visible('clock') && (
