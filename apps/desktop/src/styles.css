@@ -10,8 +10,13 @@
   --rim: rgba(230, 234, 242, 0.2);
   --text: #e6eaf2;
   --text-2: #a2a6b4;
+  --text-3: #868a98;
+  --hover: rgba(230, 234, 242, 0.05);
+  --accent: #8fa4cc;
+  --accent-soft: rgba(143, 164, 204, 0.14);
   --font: 'Gothic A1', system-ui, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --font-num: 'Barlow Condensed', var(--font);
 }
 
 html,
@@ -28,10 +33,12 @@ body {
   user-select: none;
 }
 
-.veil {
-  display: grid;
-  place-items: center;
+.stage {
+  position: relative;
   height: 100%;
+}
+
+.stage--summoned {
   background: var(--veil);
   animation: appear 0.14s ease-out;
 }
@@ -49,17 +56,55 @@ body {
 }
 
 .panel {
-  width: 360px;
+  position: absolute;
 }
 
 .panel__bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   height: 32px;
-  padding: 0 14px;
+  padding: 0 6px 0 14px;
   background: var(--glass);
   border-bottom: 1px solid var(--border);
+  cursor: grab;
+}
+
+.panel__bar:active {
+  cursor: grabbing;
+}
+
+.panel__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.icon-button {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  transition:
+    background-color 0.12s,
+    color 0.12s;
+}
+
+.icon-button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.icon-button[aria-pressed='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .panel__title {
@@ -103,6 +148,12 @@ kbd {
   color: var(--text-2);
 }
 
+.big-number {
+  margin: 0;
+  font: 600 26px/1.2 var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+
 @keyframes appear {
   from {
     opacity: 0;
@@ -111,7 +162,7 @@ kbd {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .veil {
+  .stage--summoned {
     animation-name: fade;
   }
   @keyframes fade {
