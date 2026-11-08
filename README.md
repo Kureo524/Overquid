@@ -51,11 +51,27 @@ all in a pnpm monorepo.
 
 ## Development
 
-Requires Node 20+ and pnpm 10.
+Requires Node 20+, pnpm 10, Rust (stable) and the
+[Tauri system dependencies](https://v2.tauri.app/start/prerequisites/#linux), plus `gtk-layer-shell` on Linux.
 
 ```sh
 pnpm install
 pnpm lint && pnpm typecheck && pnpm test
+cargo clippy --workspace -- -D warnings && cargo test --workspace
+```
+
+### Try the overlay
+
+```sh
+pnpm desktop build --no-bundle      # builds target/release/overquid
+./target/release/overquid &          # starts hidden, in the background
+./target/release/overquid toggle     # shows it; Escape or toggle again hides it
+```
+
+Bind `overquid toggle` to a hotkey in your desktop. On Hyprland (Lua config):
+
+```lua
+hl.bind("ALT + SHIFT + O", hl.dsp.exec_cmd("overquid toggle"))
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for branches, commit conventions and the PR flow.

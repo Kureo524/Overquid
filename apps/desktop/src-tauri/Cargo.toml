@@ -1,0 +1,23 @@
+[package]
+name = "overquid"
+version = "0.0.0"
+description = "Universal, plugin-driven desktop overlay"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "overquid_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+gtk-layer-shell = { version = "0.8", features = ["v0_6"] }
