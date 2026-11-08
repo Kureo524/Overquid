@@ -71,7 +71,7 @@ pnpm desktop build --no-bundle      # builds target/release/overquid
 Bind `overquid toggle` to a hotkey in your desktop. On Hyprland (Lua config):
 
 ```lua
-hl.bind("ALT + SHIFT + O", hl.dsp.exec_cmd("overquid toggle"))
+hl.bind("ALT + SHIFT + X", hl.dsp.exec_cmd("overquid toggle"))
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for branches, commit conventions and the PR flow.

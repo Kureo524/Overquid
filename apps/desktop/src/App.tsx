@@ -14,11 +14,14 @@ export function App() {
   useEffect(() => {
     invoke<OverlayMode>('overlay_mode').then(setMode, () => setMode(null));
 
-    const onKeyDown = (event: KeyboardEvent) => {
+    // Hide on key *release*: hiding on keydown unmaps the window before the
+    // release arrives, WebKitGTK then believes Escape is still held and drops
+    // the next press after the overlay is shown again.
+    const onKeyUp = (event: KeyboardEvent) => {
       if (event.key === 'Escape') void invoke('hide_overlay');
     };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    return () => window.removeEventListener('keyup', onKeyUp);
   }, []);
 
   return (
