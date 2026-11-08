@@ -1,10 +1,12 @@
 mod cli;
+mod layout;
 mod overlay;
 mod state;
 
 use tauri::{Manager, Runtime, State, WebviewWindow};
 
 use cli::{CliError, Command};
+use layout::LayoutStore;
 use overlay::{Overlay, Status};
 use state::Rect;
 
@@ -30,8 +32,19 @@ fn set_pinned_regions<R: Runtime>(
     window: WebviewWindow<R>,
     overlay: State<'_, Overlay>,
     rects: Vec<Rect>,
+    restore: bool,
 ) -> tauri::Result<()> {
-    overlay.set_pinned(&window, rects)
+    overlay.set_pinned(&window, rects, restore)
+}
+
+#[tauri::command(async)]
+fn load_layout(store: State<'_, LayoutStore>) -> Option<serde_json::Value> {
+    store.load()
+}
+
+#[tauri::command(async)]
+fn save_layout(store: State<'_, LayoutStore>, layout: serde_json::Value) -> Result<(), String> {
+    store.save(&layout)
 }
 
 /// Gives the keyboard back to the app underneath (pinned panels only).
@@ -79,6 +92,7 @@ pub fn run() {
             let window = app
                 .get_webview_window(WINDOW)
                 .expect("overlay window is declared in tauri.conf.json");
+            app.manage(LayoutStore::new(&app.path().app_config_dir()?));
             app.manage(Overlay::setup(&window)?);
             apply(app.handle(), command);
             Ok(())
@@ -87,7 +101,9 @@ pub fn run() {
             overlay_status,
             dismiss_overlay,
             set_pinned_regions,
-            release_keyboard
+            release_keyboard,
+            load_layout,
+            save_layout
         ])
         .run(tauri::generate_context!())
         .expect("error while running Overquid");
