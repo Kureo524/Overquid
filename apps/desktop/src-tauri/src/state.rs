@@ -84,6 +84,15 @@ pub fn after_pinned_change(current: Visibility, has_pinned: bool) -> Visibility 
     }
 }
 
+/// Visibility once the saved layout is loaded at startup: pinned panels come
+/// back on screen without summoning the overlay.
+pub fn after_restore(current: Visibility, has_pinned: bool) -> Visibility {
+    match current {
+        Visibility::Hidden if has_pinned => Visibility::Pinned,
+        other => after_pinned_change(other, has_pinned),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Visibility::{Hidden, Pinned, Summoned};
@@ -119,6 +128,14 @@ mod tests {
         assert_eq!(after_pinned_change(Pinned, false), Hidden);
         assert_eq!(after_pinned_change(Pinned, true), Pinned);
         assert_eq!(after_pinned_change(Summoned, false), Summoned);
+    }
+
+    #[test]
+    fn restore_shows_saved_pinned_panels() {
+        assert_eq!(after_restore(Hidden, true), Pinned);
+        assert_eq!(after_restore(Hidden, false), Hidden);
+        assert_eq!(after_restore(Summoned, true), Summoned);
+        assert_eq!(after_restore(Pinned, false), Hidden);
     }
 
     #[test]

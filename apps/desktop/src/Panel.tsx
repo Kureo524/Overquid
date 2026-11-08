@@ -1,17 +1,15 @@
-import { useRef, type PointerEvent, type ReactNode } from 'react';
-
-export interface PanelPosition {
-  x: number;
-  y: number;
-}
+import { useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode } from 'react';
+import { toPlacement, toPosition, type Placement, type Position, type Size } from './layout';
 
 interface PanelProps {
   title: string;
   meta?: ReactNode;
   width: number;
-  position: PanelPosition;
+  placement: Placement;
+  viewport: Size;
   pinned: boolean;
-  onMove: (position: PanelPosition) => void;
+  /** Called once a drag ends, with where the panel was dropped. */
+  onPlace: (placement: Placement) => void;
   onTogglePin: () => void;
   onPointerLeave?: (() => void) | undefined;
   children: ReactNode;
@@ -22,14 +20,34 @@ export function Panel({
   title,
   meta,
   width,
-  position,
+  placement,
+  viewport,
   pinned,
-  onMove,
+  onPlace,
   onTogglePin,
   onPointerLeave,
   children,
 }: PanelProps) {
+  const ref = useRef<HTMLElement>(null);
+  // Height depends on the content: measured, not passed in.
+  const [height, setHeight] = useState(0);
+  const size: Size = { width, height };
+  // While dragging, the panel follows the pointer; the placement is only
+  // updated (and saved) on drop.
+  const [dragged, setDragged] = useState<Position | null>(null);
   const drag = useRef<{ dx: number; dy: number } | null>(null);
+
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    const measure = () => setHeight(element.offsetHeight);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  const position = dragged ?? toPosition(placement, size, viewport);
 
   const onPointerDown = (event: PointerEvent<HTMLElement>) => {
     if (event.button !== 0 || (event.target as Element).closest('button')) return;
@@ -38,17 +56,21 @@ export function Panel({
   };
   const onPointerMove = (event: PointerEvent<HTMLElement>) => {
     if (!drag.current) return;
-    onMove({
-      x: Math.max(0, Math.round(event.clientX - drag.current.dx)),
-      y: Math.max(0, Math.round(event.clientY - drag.current.dy)),
-    });
+    const x = Math.round(event.clientX - drag.current.dx);
+    const y = Math.round(event.clientY - drag.current.dy);
+    // Clamp through a placement round trip, so the panel cannot leave the screen.
+    setDragged(toPosition(toPlacement({ x, y }, size, viewport), size, viewport));
   };
   const endDrag = () => {
     drag.current = null;
+    if (!dragged) return;
+    onPlace(toPlacement(dragged, size, viewport));
+    setDragged(null);
   };
 
   return (
     <section
+      ref={ref}
       className="glass panel"
       style={{ width, left: position.x, top: position.y }}
       data-pinned={pinned}
@@ -71,7 +93,12 @@ export function Panel({
             aria-pressed={pinned}
             aria-label={pinned ? `Unpin ${title}` : `Pin ${title}`}
             title={pinned ? 'Unpin' : 'Pin: keep visible when the overlay is closed'}
-            onClick={onTogglePin}
+            onClick={(event) => {
+              onTogglePin();
+              // Do not keep focus: Space or Enter typed later (meant for the
+              // app underneath) would toggle the pin again.
+              event.currentTarget.blur();
+            }}
           >
             <PinIcon />
           </button>

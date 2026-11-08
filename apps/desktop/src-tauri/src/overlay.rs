@@ -77,15 +77,27 @@ impl Overlay {
     }
 
     /// Records where the pinned panels are; they are the only clickable areas
-    /// while pinned.
+    /// while pinned. `restore` is set for the first report after the saved
+    /// layout is loaded: pinned panels then come back on screen.
     pub fn set_pinned<R: Runtime>(
         &self,
         window: &WebviewWindow<R>,
         rects: Vec<Rect>,
+        restore: bool,
     ) -> tauri::Result<()> {
+        // Restoring at startup only on layer-shell: the fallback window
+        // cannot yet be shown for pinned panels without taking the keyboard
+        // and the clicks (see the GNOME issue). There, pinned panels come
+        // back on the first summon instead.
+        let restore = restore && self.mode == Mode::LayerShell;
         self.transition(window, |inner| {
             inner.pinned = rects;
-            state::after_pinned_change(inner.visibility, !inner.pinned.is_empty())
+            let has_pinned = !inner.pinned.is_empty();
+            if restore {
+                state::after_restore(inner.visibility, has_pinned)
+            } else {
+                state::after_pinned_change(inner.visibility, has_pinned)
+            }
         })
     }
 
@@ -134,6 +146,11 @@ impl Overlay {
             }
             Visibility::Pinned => {
                 set_input_region(window, Some(pinned))?;
+                // Straight from hidden when the saved layout is restored at
+                // startup (layer-shell only).
+                if previous == Visibility::Hidden {
+                    window.show()?;
+                }
                 // Coming from summoned, the overlay still holds the keyboard:
                 // give it back to the app underneath right away.
                 if self.mode == Mode::LayerShell && previous != Visibility::Pinned {

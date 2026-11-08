@@ -44,7 +44,10 @@ export function useOverlayStatus(): { mode: OverlayMode | null; visibility: Visi
 
 export const dismissOverlay = () => invoke('dismiss_overlay');
 export const releaseKeyboard = () => invoke('release_keyboard');
-export const setPinnedRegions = (rects: Rect[]) => invoke('set_pinned_regions', { rects });
+/** `restore`: first report after the saved layout is loaded, pinned panels
+ * then come back on screen. */
+export const setPinnedRegions = (rects: Rect[], restore = false) =>
+  invoke('set_pinned_regions', { rects, restore });
 
 /** Rectangles of the given elements, rounded to whole CSS pixels. */
 export function regionsOf(elements: Iterable<Element>): Rect[] {
