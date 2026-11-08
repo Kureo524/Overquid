@@ -22,7 +22,8 @@ fn apply<R: Runtime>(app: &tauri::AppHandle<R>, command: Command) {
     let Some(window) = app.get_webview_window(WINDOW) else {
         return;
     };
-    if let Err(error) = overlay::apply(&window, command) {
+    let mode = *app.state::<Mode>();
+    if let Err(error) = overlay::apply(&window, mode, command) {
         eprintln!("overquid: {command:?} failed: {error}");
     }
 }

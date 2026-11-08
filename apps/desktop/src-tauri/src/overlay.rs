@@ -26,7 +26,6 @@ pub fn setup<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<Mode> {
     }
 
     window.set_always_on_top(true)?;
-    window.maximize()?;
     Ok(Mode::Fallback)
 }
 
@@ -55,17 +54,43 @@ fn init_layer_shell<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<()> 
     Ok(())
 }
 
-pub fn apply<R: Runtime>(window: &WebviewWindow<R>, command: Command) -> tauri::Result<()> {
+pub fn apply<R: Runtime>(
+    window: &WebviewWindow<R>,
+    mode: Mode,
+    command: Command,
+) -> tauri::Result<()> {
     match command {
         Command::Run => Ok(()),
-        Command::Show => show(window),
+        Command::Show => show(window, mode),
         Command::Hide => window.hide(),
         Command::Toggle if window.is_visible()? => window.hide(),
-        Command::Toggle => show(window),
+        Command::Toggle => show(window, mode),
     }
 }
 
-fn show<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<()> {
+fn show<R: Runtime>(window: &WebviewWindow<R>, mode: Mode) -> tauri::Result<()> {
     window.show()?;
+    if mode == Mode::Fallback {
+        cover_monitor(window)?;
+    }
     window.set_focus()
+}
+
+/// Sizes the fallback window to its monitor. Layer-shell surfaces are sized by
+/// their anchors instead.
+///
+/// Done after `show()` because window managers ignore geometry requests on
+/// unmapped windows. Not `maximize()`: GNOME and Hyprland ignore it for a
+/// non-resizable window. Not `set_fullscreen()`: GNOME paints black behind
+/// fullscreen windows, which kills the transparency.
+fn cover_monitor<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<()> {
+    let monitor = match window.current_monitor()? {
+        Some(monitor) => Some(monitor),
+        None => window.primary_monitor()?,
+    };
+    if let Some(monitor) = monitor {
+        window.set_position(*monitor.position())?;
+        window.set_size(*monitor.size())?;
+    }
+    Ok(())
 }
