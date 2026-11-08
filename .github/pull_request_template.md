@@ -15,6 +15,6 @@ Closes #
 - [ ] Branch created from `dev` (or `main` for a `hotfix/…`)
 - [ ] `pnpm lint`, `pnpm typecheck` and `pnpm test` pass locally
 - [ ] Tests added or updated for the change
-- [ ] Docs updated (README, `docs/`, ADR in `docs/adr/` for a structural decision)
+- [ ] Docs updated (README, CONTRIBUTING) if behaviour or workflow changed
 - [ ] No new permission or network access without a reason stated above
-- [ ] UI changes follow `docs/design/encre.md` (screenshot below)
+- [ ] UI changes include a screenshot below

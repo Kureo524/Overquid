@@ -32,4 +32,4 @@ pnpm test
 ## Plugins
 
 Plugins must never inject into or read the memory of another process, and must respect the terms of service of the
-services they use. See the plugin rules in [docs/PLAN.md](docs/PLAN.md).
+services they use.

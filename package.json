@@ -9,8 +9,8 @@
     "node": ">=20"
   },
   "scripts": {
-    "lint": "eslint . && prettier --check .",
-    "format": "prettier --write .",
+    "lint": "eslint . && git ls-files -z --cached --others --exclude-standard | xargs -0 prettier --ignore-unknown --check",
+    "format": "git ls-files -z --cached --others --exclude-standard | xargs -0 prettier --ignore-unknown --write",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "build": "pnpm -r build",
