@@ -85,10 +85,9 @@ impl Overlay {
         rects: Vec<Rect>,
         restore: bool,
     ) -> tauri::Result<()> {
-        // Restoring at startup only on layer-shell: the fallback window
-        // cannot yet be shown for pinned panels without taking the keyboard
-        // and the clicks (see the GNOME issue). There, pinned panels come
-        // back on the first summon instead.
+        // Restoring at startup only on layer-shell: in fallback mode, GNOME
+        // gives the first map its default size and placement (#18). There,
+        // pinned panels come back on the first summon instead.
         let restore = restore && self.mode == Mode::LayerShell;
         self.transition(window, |inner| {
             inner.pinned = rects;
@@ -135,6 +134,9 @@ impl Overlay {
         match visibility {
             Visibility::Hidden => window.hide()?,
             Visibility::Summoned => {
+                if self.mode == Mode::Fallback {
+                    window.set_focusable(true)?;
+                }
                 set_input_region(window, None)?;
                 window.show()?;
                 if self.mode == Mode::Fallback {
@@ -145,12 +147,13 @@ impl Overlay {
                 }
             }
             Visibility::Pinned => {
-                set_input_region(window, Some(pinned))?;
-                // Straight from hidden when the saved layout is restored at
-                // startup (layer-shell only).
-                if previous == Visibility::Hidden {
+                if self.mode == Mode::Fallback && previous == Visibility::Summoned {
+                    remap_unfocused(window)?;
+                } else if previous == Visibility::Hidden {
+                    // Saved layout restored at startup (layer-shell only).
                     window.show()?;
                 }
+                set_input_region(window, Some(pinned))?;
                 // Coming from summoned, the overlay still holds the keyboard:
                 // give it back to the app underneath right away.
                 if self.mode == Mode::LayerShell && previous != Visibility::Pinned {
@@ -273,6 +276,21 @@ fn on_gtk_window<R: Runtime>(
         Ok(gtk_window) => f(&gtk_window),
         Err(error) => eprintln!("overquid: no GTK window: {error}"),
     })
+}
+
+/// Fallback mode, summoned to pinned: gives up the keyboard focus.
+///
+/// On GNOME, while the overlay window has the keyboard focus, no click goes
+/// through it, whatever its input region. Making it unfocusable is not enough
+/// once it has the focus: it is unmapped and mapped again. GNOME then gives
+/// the focus to no window (a Wayland client cannot hand it to another one),
+/// so the user clicks the app underneath to type in it again. A pinned panel
+/// cannot take the keyboard in fallback mode.
+fn remap_unfocused<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<()> {
+    window.set_focusable(false)?;
+    window.hide()?;
+    window.show()?;
+    cover_monitor(window)
 }
 
 /// Sizes the fallback window to its monitor. Layer-shell surfaces are sized by
