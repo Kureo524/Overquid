@@ -1,29 +1,53 @@
 mod cli;
 mod overlay;
+mod state;
 
 use tauri::{Manager, Runtime, State, WebviewWindow};
 
 use cli::{CliError, Command};
-use overlay::Mode;
+use overlay::{Overlay, Status};
+use state::Rect;
 
 const WINDOW: &str = "overlay";
 
 #[tauri::command]
-fn overlay_mode(mode: State<'_, Mode>) -> Mode {
-    *mode
+fn overlay_status(overlay: State<'_, Overlay>) -> Status {
+    overlay.status()
 }
 
+/// Escape while summoned: back to the pinned panels, or hidden.
 #[tauri::command]
-fn hide_overlay<R: Runtime>(window: WebviewWindow<R>) -> tauri::Result<()> {
-    window.hide()
+fn dismiss_overlay<R: Runtime>(
+    window: WebviewWindow<R>,
+    overlay: State<'_, Overlay>,
+) -> tauri::Result<()> {
+    overlay.dismiss(&window)
+}
+
+/// Where the pinned panels are, in CSS pixels. Empty when nothing is pinned.
+#[tauri::command]
+fn set_pinned_regions<R: Runtime>(
+    window: WebviewWindow<R>,
+    overlay: State<'_, Overlay>,
+    rects: Vec<Rect>,
+) -> tauri::Result<()> {
+    overlay.set_pinned(&window, rects)
+}
+
+/// Gives the keyboard back to the app underneath (pinned panels only).
+#[tauri::command]
+fn release_keyboard<R: Runtime>(
+    window: WebviewWindow<R>,
+    overlay: State<'_, Overlay>,
+) -> tauri::Result<()> {
+    overlay.release_keyboard(&window)
 }
 
 fn apply<R: Runtime>(app: &tauri::AppHandle<R>, command: Command) {
     let Some(window) = app.get_webview_window(WINDOW) else {
         return;
     };
-    let mode = *app.state::<Mode>();
-    if let Err(error) = overlay::apply(&window, mode, command) {
+    if let Err(error) = app.state::<Overlay>().command(&window, command) {
         eprintln!("overquid: {command:?} failed: {error}");
     }
 }
@@ -55,12 +79,16 @@ pub fn run() {
             let window = app
                 .get_webview_window(WINDOW)
                 .expect("overlay window is declared in tauri.conf.json");
-            let mode = overlay::setup(&window)?;
-            app.manage(mode);
+            app.manage(Overlay::setup(&window)?);
             apply(app.handle(), command);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![overlay_mode, hide_overlay])
+        .invoke_handler(tauri::generate_handler![
+            overlay_status,
+            dismiss_overlay,
+            set_pinned_regions,
+            release_keyboard
+        ])
         .run(tauri::generate_context!())
         .expect("error while running Overquid");
 }
