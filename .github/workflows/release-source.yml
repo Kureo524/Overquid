@@ -1,0 +1,20 @@
+name: Release source
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  source:
+    name: Release source
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          case "$HEAD_REF" in
+            dev|hotfix/*) echo "OK: $HEAD_REF -> main" ;;
+            *) echo "::error::main only accepts PRs from dev or hotfix/* (got '$HEAD_REF')."; exit 1 ;;
+          esac

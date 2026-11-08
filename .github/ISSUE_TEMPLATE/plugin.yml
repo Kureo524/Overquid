@@ -1,0 +1,41 @@
+name: New plugin
+description: Propose a plugin (example plugin in this repo, or a community plugin).
+labels: [plugin]
+body:
+  - type: input
+    id: id
+    attributes:
+      label: Plugin id
+      placeholder: com.example.notes
+    validations:
+      required: true
+  - type: textarea
+    id: purpose
+    attributes:
+      label: What it does
+    validations:
+      required: true
+  - type: checkboxes
+    id: permissions
+    attributes:
+      label: Permissions needed
+      options:
+        - label: storage
+        - label: hotkeys
+        - label: notifications
+        - label: context
+        - label: events
+  - type: textarea
+    id: network
+    attributes:
+      label: Network domains
+      description: Every domain the plugin will call with fetch, one per line. Leave empty if none.
+  - type: checkboxes
+    id: rules
+    attributes:
+      label: Rules
+      options:
+        - label: The plugin does not inject into, or read the memory of, any game or process.
+          required: true
+        - label: The plugin respects the terms of service of every service it talks to.
+          required: true

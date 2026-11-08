@@ -1,0 +1,49 @@
+name: Bug report
+description: Something does not work as expected.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the overlay with Alt+Shift+O
+        2. …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Overquid version
+      placeholder: v0.1.0 or commit SHA
+  - type: dropdown
+    id: env
+    attributes:
+      label: Desktop environment
+      options:
+        - Hyprland (Wayland)
+        - KDE Plasma (Wayland)
+        - GNOME (Wayland)
+        - Sway / niri / other wlroots (Wayland)
+        - X11
+        - Windows
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: plugin
+    attributes:
+      label: Plugin involved (if any)
+      placeholder: com.example.notes@1.0.0
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      render: shell
