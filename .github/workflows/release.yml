@@ -87,15 +87,29 @@ jobs:
           cache: pnpm
           registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
+      # Without an NPM_TOKEN secret, publishing is skipped (with a warning):
+      # the release itself does not depend on npm. Re-run this job once the
+      # secret exists to publish the released versions.
+      - name: Check the npm token
+        id: npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::warning::NPM_TOKEN is not set: npm packages were not published."
+            echo "token=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "token=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Publish @overquid/sdk
-        if: needs.release-please.outputs.sdk == 'true'
+        if: steps.npm.outputs.token == 'true' && needs.release-please.outputs.sdk == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           pnpm --filter @overquid/sdk build
           pnpm --filter @overquid/sdk publish --access public --provenance --no-git-checks
       - name: Publish create-overlay-plugin
-        if: needs.release-please.outputs.create == 'true'
+        if: steps.npm.outputs.token == 'true' && needs.release-please.outputs.create == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: pnpm --filter create-overlay-plugin publish --access public --provenance --no-git-checks
