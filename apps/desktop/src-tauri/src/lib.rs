@@ -1,6 +1,7 @@
 mod cli;
 mod layout;
 mod overlay;
+mod plugins;
 mod state;
 
 use tauri::{Manager, Runtime, State, WebviewWindow};
@@ -56,6 +57,44 @@ fn release_keyboard<R: Runtime>(
     overlay.release_keyboard(&window)
 }
 
+/// Spike (ADR 0003): a call relayed by the host from a plugin iframe. The host
+/// sets `plugin_id` from the iframe that sent the message, never from its
+/// content.
+#[tauri::command]
+fn plugin_call(
+    plugin_id: String,
+    method: String,
+    args: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    match method.as_str() {
+        "echo" => Ok(serde_json::json!({ "pluginId": plugin_id, "args": args })),
+        "report" => {
+            eprintln!("[plugin {plugin_id}] {args}");
+            Ok(serde_json::Value::Null)
+        }
+        other => Err(format!("unknown method '{other}'")),
+    }
+}
+
+#[tauri::command(async)]
+fn list_plugins<R: Runtime>(app: tauri::AppHandle<R>) -> Vec<plugins::Manifest> {
+    plugins::list(&plugins_dir(&app))
+}
+
+/// Folder holding one sub-folder per plugin. `OVERQUID_PLUGINS_DIR` overrides
+/// it during development.
+fn plugins_dir<R: Runtime>(app: &tauri::AppHandle<R>) -> std::path::PathBuf {
+    std::env::var_os("OVERQUID_PLUGINS_DIR")
+        .map(Into::into)
+        .or_else(|| {
+            app.path()
+                .app_data_dir()
+                .ok()
+                .map(|dir| dir.join("plugins"))
+        })
+        .unwrap_or_default()
+}
+
 fn apply<R: Runtime>(app: &tauri::AppHandle<R>, command: Command) {
     let Some(window) = app.get_webview_window(WINDOW) else {
         return;
@@ -88,6 +127,9 @@ pub fn run() {
                 apply(app, command);
             }
         }))
+        .register_uri_scheme_protocol(plugins::SCHEME, |ctx, request| {
+            plugins::serve(&plugins_dir(ctx.app_handle()), request.uri().path())
+        })
         .setup(move |app| {
             let window = app
                 .get_webview_window(WINDOW)
@@ -103,7 +145,9 @@ pub fn run() {
             set_pinned_regions,
             release_keyboard,
             load_layout,
-            save_layout
+            save_layout,
+            plugin_call,
+            list_plugins
         ])
         .run(tauri::generate_context!())
         .expect("error while running Overquid");

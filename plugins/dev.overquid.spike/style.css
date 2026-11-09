@@ -1,0 +1,18 @@
+body {
+  margin: 0;
+  color: #e6eaf2;
+  font:
+    11px/1.5 ui-monospace,
+    monospace;
+}
+ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.pass {
+  color: #93b07e;
+}
+.fail {
+  color: #d9646c;
+}
