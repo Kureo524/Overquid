@@ -138,13 +138,17 @@ header {
 .who strong {
   font-size: 13px;
 }
-.who span,
-.meta {
+.who span {
   overflow: hidden;
   color: #868a98;
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.meta {
+  display: block;
+  color: #868a98;
+  font-size: 11px;
 }
 .badge {
   display: inline-flex;

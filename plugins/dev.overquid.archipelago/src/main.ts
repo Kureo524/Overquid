@@ -173,7 +173,8 @@ function renderHints(session: Session) {
           : `${session.playerName(hint.findingPlayer)}'s world`;
       const meta = [`${session.locationName(hint.location, hint.findingPlayer)} in ${world}`];
       if (hint.entrance) meta.push(`via ${hint.entrance}`);
-      meta.push(HINT_STATUS[hint.status] ?? '');
+      // The receiver's own call; an unspecified status says nothing.
+      if (hint.status !== 0) meta.push(HINT_STATUS[hint.status] ?? '');
       const node = row(main, meta.filter(Boolean).join(' · '));
       node.dataset.found = String(hint.found);
       return node;

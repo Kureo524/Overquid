@@ -74,9 +74,13 @@ export class Connection {
     let socket: Socket;
     try {
       socket = this.open(this.url);
-    } catch {
-      // Same as a connection that closes at once; not reentrant.
-      queueMicrotask(() => this.lost());
+    } catch (error) {
+      // WebKit throws when the plugin's CSP blocks the address: retrying
+      // would not help. Reported after the caller's own update.
+      console.error('Archipelago:', error);
+      this.status = 'offline';
+      this.error = 'The overlay blocked the connection to this address.';
+      queueMicrotask(() => this.events.change());
       return;
     }
     this.socket = socket;

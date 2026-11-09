@@ -125,6 +125,22 @@ describe('Connection', () => {
     expect(sockets).toHaveLength(2);
   });
 
+  it('says so when the address is blocked', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const connection = new Connection(
+      'wss://archipelago.gg:1',
+      { name: 'K', password: '', uuid: 'u' },
+      events,
+      () => {
+        throw new DOMException('Blocked', 'SecurityError');
+      },
+    );
+    expect(connection.status).toBe('offline');
+    expect(connection.error).toMatch(/blocked/);
+    await Promise.resolve();
+    expect(events.change).toHaveBeenCalled();
+  });
+
   it('passes new items on', () => {
     open();
     join();
