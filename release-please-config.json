@@ -21,7 +21,8 @@
           "path": "apps/desktop/package.json",
           "jsonpath": "$.version"
         }
-      ]
+      ],
+      "initial-version": "0.1.0"
     },
     "packages/sdk": {
       "release-type": "node",
@@ -37,7 +38,8 @@
     "packages/create-overlay-plugin": {
       "release-type": "node",
       "package-name": "create-overlay-plugin",
-      "component": "create-overlay-plugin"
+      "component": "create-overlay-plugin",
+      "initial-version": "0.1.0"
     }
   },
   "pull-request-title-pattern": "chore(release): release${component} ${version}",
