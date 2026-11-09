@@ -1,0 +1,53 @@
+/* "Encre" design direction: one big number, quiet controls. */
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: #e6eaf2;
+  font:
+    12px/1.4 system-ui,
+    sans-serif;
+}
+.phase {
+  margin: 0;
+  color: #868a98;
+}
+.phase[data-phase='work'] {
+  color: #8fa4cc;
+}
+.time {
+  font:
+    600 40px/1.1 'Barlow Condensed',
+    system-ui,
+    sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+.controls {
+  display: flex;
+  gap: 6px;
+}
+button {
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid rgba(230, 234, 242, 0.08);
+  border-radius: 8px;
+  background: rgba(230, 234, 242, 0.04);
+  color: #a2a6b4;
+  font: inherit;
+  cursor: pointer;
+}
+button:hover {
+  border-color: rgba(230, 234, 242, 0.15);
+  color: #e6eaf2;
+}
+#toggle {
+  background: rgba(143, 164, 204, 0.14);
+  color: #8fa4cc;
+}

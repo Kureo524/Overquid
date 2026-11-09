@@ -62,13 +62,28 @@ fn release_keyboard<R: Runtime>(
 fn plugin_call<R: Runtime>(
     app: tauri::AppHandle<R>,
     storage: State<'_, plugin_storage::PluginStorage>,
+    limiter: State<'_, plugins::RateLimiter>,
     plugin_id: String,
     method: String,
     args: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     let (_, manifest) = plugins::find(&plugin_roots(&app), &plugin_id)
         .ok_or_else(|| format!("unknown plugin '{plugin_id}'"))?;
-    plugins::call(&manifest, &storage, &method, &args)
+    let notify = |title: &str, body: &str| {
+        use tauri_plugin_notification::NotificationExt;
+        app.notification()
+            .builder()
+            .title(title)
+            .body(body)
+            .show()
+            .map_err(|error| error.to_string())
+    };
+    let host = plugins::Host {
+        storage: &storage,
+        limiter: &limiter,
+        notify: &notify,
+    };
+    plugins::call(&manifest, &host, &method, &args)
 }
 
 /// Places a web plugin's native view over `rect` (CSS pixels in the overlay
@@ -446,6 +461,7 @@ pub fn run() {
                 apply(app, command);
             }
         }))
+        .plugin(tauri_plugin_notification::init())
         .register_uri_scheme_protocol(plugins::SCHEME, |ctx, request| {
             plugins::serve_from(&plugin_roots(ctx.app_handle()), request.uri().path())
         })
@@ -454,6 +470,11 @@ pub fn run() {
                 .get_webview_window(WINDOW)
                 .expect("overlay window is declared in tauri.conf.json");
             app.manage(LayoutStore::new(&app.path().app_config_dir()?));
+            // Notifications: 5 per minute per plugin.
+            app.manage(plugins::RateLimiter::new(
+                5,
+                std::time::Duration::from_secs(60),
+            ));
             app.manage(plugin_storage::PluginStorage::new(
                 &app.path().app_data_dir()?.join("plugin-data"),
             ));

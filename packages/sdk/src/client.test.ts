@@ -74,6 +74,19 @@ describe('storage', () => {
   });
 });
 
+describe('notify', () => {
+  it('maps to the notify call', async () => {
+    const host = fakeHost();
+    const shown = createClient(host.transport).notify({ title: 'Break', body: '5 min' });
+    host.reply(1, { result: null });
+    await shown;
+    expect(host.sent[0]).toMatchObject({
+      method: 'notify',
+      args: { title: 'Break', body: '5 min' },
+    });
+  });
+});
+
 describe('lifecycle', () => {
   it('tracks visibility and calls listeners until unsubscribed', () => {
     const host = fakeHost();

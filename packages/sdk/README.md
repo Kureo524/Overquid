@@ -33,6 +33,7 @@ await overquid.storage.set('count', count + 1);
 | ---------------------------------------------------------------------- | ----------------- |
 | `onShow`, `onHide`, `visible`                                          | none              |
 | `storage.get`, `set`, `remove`, `keys` (JSON values, 1 MiB per plugin) | `storage`         |
+| `notify({ title, body })`: desktop notification, 5 per minute          | `notifications`   |
 | `fetch` to the host names listed in `network`                          | `network` entries |
 
 Notes:
@@ -41,5 +42,6 @@ Notes:
 - Resources must be requested in CORS mode (`crossorigin` on `<link>`, `<img>`…). Vite already adds it to the tags it
   emits.
 - `localStorage` and cookies are unavailable (sandboxed iframe): use `storage`.
+- A notification's title always starts with the plugin's name: a plugin cannot pass for another one.
 
 See [`plugins/dev.overquid.sdk-demo`](../../plugins/dev.overquid.sdk-demo) for a complete example.
