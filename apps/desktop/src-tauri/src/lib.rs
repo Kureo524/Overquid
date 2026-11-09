@@ -1,6 +1,8 @@
 mod cli;
+mod json_file;
 mod layout;
 mod overlay;
+mod plugin_storage;
 mod plugins;
 mod state;
 
@@ -16,15 +18,6 @@ const WINDOW: &str = "overlay";
 #[tauri::command]
 fn overlay_status(overlay: State<'_, Overlay>) -> Status {
     overlay.status()
-}
-
-/// Escape while summoned: back to the pinned panels, or hidden.
-#[tauri::command]
-fn dismiss_overlay<R: Runtime>(
-    window: WebviewWindow<R>,
-    overlay: State<'_, Overlay>,
-) -> tauri::Result<()> {
-    overlay.dismiss(&window)
 }
 
 /// Where the pinned panels are, in CSS pixels. Empty when nothing is pinned.
@@ -57,23 +50,20 @@ fn release_keyboard<R: Runtime>(
     overlay.release_keyboard(&window)
 }
 
-/// Spike (ADR 0003): a call relayed by the host from a plugin iframe. The host
-/// sets `plugin_id` from the iframe that sent the message, never from its
-/// content.
-#[tauri::command]
-fn plugin_call(
+/// A call relayed by the host from a plugin iframe (ADR 0003). The host sets
+/// `plugin_id` from the iframe that sent the message, never from its content;
+/// the call is then checked against that plugin's manifest.
+#[tauri::command(async)]
+fn plugin_call<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    storage: State<'_, plugin_storage::PluginStorage>,
     plugin_id: String,
     method: String,
     args: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    match method.as_str() {
-        "echo" => Ok(serde_json::json!({ "pluginId": plugin_id, "args": args })),
-        "report" => {
-            eprintln!("[plugin {plugin_id}] {args}");
-            Ok(serde_json::Value::Null)
-        }
-        other => Err(format!("unknown method '{other}'")),
-    }
+    let manifest = plugins::load_manifest(&plugins_dir(&app), &plugin_id)
+        .ok_or_else(|| format!("unknown plugin '{plugin_id}'"))?;
+    plugins::call(&manifest, &storage, &method, &args)
 }
 
 #[tauri::command(async)]
@@ -135,13 +125,15 @@ pub fn run() {
                 .get_webview_window(WINDOW)
                 .expect("overlay window is declared in tauri.conf.json");
             app.manage(LayoutStore::new(&app.path().app_config_dir()?));
+            app.manage(plugin_storage::PluginStorage::new(
+                &app.path().app_data_dir()?.join("plugin-data"),
+            ));
             app.manage(Overlay::setup(&window)?);
             apply(app.handle(), command);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             overlay_status,
-            dismiss_overlay,
             set_pinned_regions,
             release_keyboard,
             load_layout,

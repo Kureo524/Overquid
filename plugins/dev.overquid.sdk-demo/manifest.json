@@ -1,0 +1,9 @@
+{
+  "id": "dev.overquid.sdk-demo",
+  "name": "SDK demo",
+  "version": "0.1.0",
+  "entry": "dist/index.html",
+  "panel": { "defaultSize": [300, 150] },
+  "permissions": ["storage"],
+  "network": []
+}

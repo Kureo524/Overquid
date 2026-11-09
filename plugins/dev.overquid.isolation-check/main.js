@@ -1,4 +1,5 @@
-// Isolation spike (issue #21): every check the plugin can run from the inside.
+// Isolation check (ADR 0003, #21): everything a plugin can try from the inside.
+// Talks the raw protocol on purpose, without the SDK.
 // Each one states what must happen for the isolation model to hold.
 
 async function tryFetch(url) {
@@ -13,8 +14,8 @@ async function tryFetch(url) {
 let nextId = 1;
 const pending = new Map();
 window.addEventListener('message', (event) => {
-  if (event.source !== window.parent) return;
-  const { id, result, error } = event.data ?? {};
+  if (event.source !== window.parent || event.data?.overquid !== 1) return;
+  const { id, result, error } = event.data;
   pending.get(id)?.({ result, error });
   pending.delete(id);
 });
@@ -22,7 +23,7 @@ const call = (method, args) =>
   new Promise((resolve) => {
     const id = nextId++;
     pending.set(id, resolve);
-    window.parent.postMessage({ id, method, args }, '*');
+    window.parent.postMessage({ overquid: 1, id, method, args }, '*');
   });
 
 const checks = [];
@@ -65,7 +66,13 @@ check(
 
 const echo = await call('echo', { claimedPluginId: 'com.evil.other' });
 check('Round trip', echo.result ? 'ok' : `error: ${echo.error}`, 'ok');
-check('Caller identity', echo.result?.pluginId, 'dev.overquid.spike');
+check('Caller identity', echo.result?.pluginId, 'dev.overquid.isolation-check');
+const storageCall = await call('storage.get', { key: 'x' });
+check(
+  'storage without the permission',
+  storageCall.error?.includes('permission') ? 'refused' : 'allowed',
+  'refused',
+);
 
 document.getElementById('results').replaceChildren(
   ...checks.map(({ name, actual, pass }) => {
@@ -75,4 +82,4 @@ document.getElementById('results').replaceChildren(
     return item;
   }),
 );
-await call('report', checks);
+await call('log', checks);

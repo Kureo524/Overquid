@@ -12,6 +12,8 @@ interface PanelProps {
   onPlace: (placement: Placement) => void;
   onTogglePin: () => void;
   onPointerLeave?: (() => void) | undefined;
+  /** Kept in the page but not shown (plugin panels stay loaded while hidden). */
+  hidden?: boolean;
   children: ReactNode;
 }
 
@@ -26,6 +28,7 @@ export function Panel({
   onPlace,
   onTogglePin,
   onPointerLeave,
+  hidden = false,
   children,
 }: PanelProps) {
   const ref = useRef<HTMLElement>(null);
@@ -72,10 +75,26 @@ export function Panel({
     <section
       ref={ref}
       className="glass panel"
-      style={{ width, left: position.x, top: position.y }}
+      style={{
+        width,
+        left: position.x,
+        top: position.y,
+        visibility: hidden ? 'hidden' : undefined,
+      }}
+      aria-hidden={hidden || undefined}
       data-pinned={pinned}
       aria-label={title}
-      onPointerLeave={onPointerLeave}
+      onPointerLeave={(event) => {
+        // Moving into a plugin's iframe also "leaves" the panel's document:
+        // only count it when the pointer is really outside the panel.
+        const box = event.currentTarget.getBoundingClientRect();
+        const inside =
+          event.clientX > box.left &&
+          event.clientX < box.right &&
+          event.clientY > box.top &&
+          event.clientY < box.bottom;
+        if (!inside) onPointerLeave?.();
+      }}
     >
       <header
         className="panel__bar"

@@ -1,18 +1,43 @@
 /**
  * Overquid plugin SDK.
  *
- * Phase 0 placeholder: the real API (lifecycle, storage, hotkeys…) lands in
- * phase 2. Only the manifest shape described in docs/PLAN.md is exposed here.
+ * ```ts
+ * import { connect } from '@overquid/sdk';
+ *
+ * const overquid = connect();
+ * overquid.onShow(() => refresh());
+ * await overquid.storage.set('draft', text);
+ * ```
  */
 
-export const SDK_VERSION = '0.0.0';
+export const SDK_VERSION = '0.1.0';
+
+export {
+  connect,
+  createClient,
+  OverquidError,
+  type Json,
+  type OverquidClient,
+  type Storage,
+  type Transport,
+  type Unsubscribe,
+} from './client';
+export {
+  PROTOCOL,
+  isCall,
+  isEvent,
+  isReply,
+  type CallMessage,
+  type EventMessage,
+  type ReplyMessage,
+} from './protocol';
 
 /** Permissions a plugin can request in its manifest. */
 export type Permission = 'storage' | 'hotkeys' | 'notifications' | 'context' | 'events';
 
 /** Shape of a plugin's `manifest.json`. */
 export interface PluginManifest {
-  /** Reverse-DNS identifier, e.g. `com.example.notes`. */
+  /** Reverse-DNS identifier, e.g. `com.example.notes`. Also the plugin folder's name. */
   id: string;
   name: string;
   version: string;
@@ -20,9 +45,8 @@ export interface PluginManifest {
   entry: string;
   panel?: {
     defaultSize?: [width: number, height: number];
-    resizable?: boolean;
   };
   permissions?: Permission[];
-  /** Domains the plugin is allowed to reach with `fetch`. */
+  /** Host names the plugin may reach with `fetch`, e.g. `api.example.com`. */
   network?: string[];
 }

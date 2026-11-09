@@ -42,7 +42,6 @@ export function useOverlayStatus(): { mode: OverlayMode | null; visibility: Visi
   return { mode, visibility };
 }
 
-export const dismissOverlay = () => invoke('dismiss_overlay');
 export const releaseKeyboard = () => invoke('release_keyboard');
 /** `restore`: first report after the saved layout is loaded, pinned panels
  * then come back on screen. */
