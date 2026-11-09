@@ -44,6 +44,8 @@ impl Overlay {
     /// Turns the (still hidden) window into an overlay.
     pub fn setup<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<Self> {
         let mode = platform_setup(window)?;
+        #[cfg(target_os = "linux")]
+        handle_escape(window)?;
         Ok(Self {
             mode,
             inner: Mutex::new(Inner {
@@ -102,6 +104,16 @@ impl Overlay {
             set_keyboard(window, Keyboard::Release)?;
         }
         Ok(())
+    }
+
+    /// Escape: closes the summoned overlay, or hands the keyboard back while
+    /// pinned.
+    pub fn escape<R: Runtime>(&self, window: &WebviewWindow<R>) -> tauri::Result<()> {
+        if self.lock().visibility == Visibility::Summoned {
+            self.dismiss(window)
+        } else {
+            self.release_keyboard(window)
+        }
     }
 
     /// Applies `next` to the state, then renders the new visibility. Pinned
@@ -187,6 +199,43 @@ fn platform_setup<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<Mode> 
 
     window.set_always_on_top(true)?;
     Ok(Mode::Fallback)
+}
+
+/// Escape is handled on the GTK window, before WebKit: a key typed while a
+/// plugin's iframe has the focus never reaches the overlay's own page.
+///
+/// Both press and release are consumed. Acting on the release matters:
+/// hiding on the press unmaps the window before the release arrives (see the
+/// Escape fix in #11). Hiding the press from WebKit matters too: a press
+/// without its release leaves WebKit thinking Escape is still held.
+#[cfg(target_os = "linux")]
+fn handle_escape<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<()> {
+    use gtk::gdk::keys::constants::Escape;
+    use gtk::glib::Propagation;
+    use gtk::prelude::*;
+    use tauri::Manager;
+
+    let gtk_window = window.gtk_window()?;
+    gtk_window.connect_key_press_event(|_, event| {
+        if event.keyval() == Escape {
+            Propagation::Stop
+        } else {
+            Propagation::Proceed
+        }
+    });
+    let target = window.clone();
+    gtk_window.connect_key_release_event(move |_, event| {
+        if event.keyval() != Escape {
+            return Propagation::Proceed;
+        }
+        if let Some(overlay) = target.try_state::<Overlay>()
+            && let Err(error) = overlay.escape(&target)
+        {
+            eprintln!("overquid: Escape failed: {error}");
+        }
+        Propagation::Stop
+    });
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]

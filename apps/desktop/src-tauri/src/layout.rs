@@ -5,11 +5,11 @@
 //! a JSON object of reasonable size, written atomically, and that a corrupt
 //! file is set aside rather than silently overwritten.
 
-use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
+
+use crate::json_file;
 
 /// Far above any real layout; guards against a runaway writer.
 pub const MAX_BYTES: usize = 256 * 1024;
@@ -27,58 +27,15 @@ impl LayoutStore {
 
     /// The saved layout, or `None` if there is none or it is unreadable.
     pub fn load(&self) -> Option<Value> {
-        let text = match fs::read_to_string(&self.path) {
-            Ok(text) => text,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return None,
-            Err(error) => {
-                eprintln!("overquid: cannot read {}: {error}", self.path.display());
-                return None;
-            }
-        };
-        match serde_json::from_str::<Value>(&text) {
-            Ok(value) if value.is_object() => Some(value),
-            _ => {
-                self.set_aside();
-                None
-            }
-        }
+        json_file::read_object(&self.path).map(Value::Object)
     }
 
     pub fn save(&self, layout: &Value) -> Result<(), String> {
         if !layout.is_object() {
             return Err("layout must be a JSON object".into());
         }
-        let text = serde_json::to_string_pretty(layout).map_err(|error| error.to_string())?;
-        if text.len() > MAX_BYTES {
-            return Err(format!("layout is larger than {MAX_BYTES} bytes"));
-        }
-        self.write_atomically(&text)
-            .map_err(|error| format!("cannot write {}: {error}", self.path.display()))
-    }
-
-    /// Write to a temporary file, then rename it over the real one: a crash
-    /// mid-write never leaves a truncated layout behind.
-    fn write_atomically(&self, text: &str) -> io::Result<()> {
-        if let Some(dir) = self.path.parent() {
-            fs::create_dir_all(dir)?;
-        }
-        let tmp = self.path.with_extension("json.tmp");
-        fs::write(&tmp, text)?;
-        fs::rename(&tmp, &self.path)
-    }
-
-    /// Keeps a corrupt file as `layout.json.corrupt` so the next save does not
-    /// destroy what may be a hand-edited layout.
-    fn set_aside(&self) {
-        let aside = self.path.with_extension("json.corrupt");
-        eprintln!(
-            "overquid: {} is not a valid layout, moved to {}",
-            self.path.display(),
-            aside.display()
-        );
-        if let Err(error) = fs::rename(&self.path, &aside) {
-            eprintln!("overquid: cannot move it: {error}");
-        }
+        json_file::write(&self.path, layout, MAX_BYTES)
+            .map_err(|error| format!("layout not saved: {error}"))
     }
 }
 
@@ -86,6 +43,7 @@ impl LayoutStore {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::fs;
 
     /// A fresh, empty directory under the system temp dir.
     fn temp_dir(name: &str) -> PathBuf {

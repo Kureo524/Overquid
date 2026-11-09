@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Clock } from './Clock';
 import { loadLayout, saveLayout, type Layout, type PanelLayout, type Size } from './layout';
 import {
-  dismissOverlay,
   regionsOf,
   releaseKeyboard,
   sameRegions,
@@ -20,16 +19,30 @@ const modeLabel: Record<OverlayMode, string> = {
   fallback: 'Always-on-top window',
 };
 
-type PanelId = 'welcome' | 'clock' | 'plugins';
+/** Built-in panels, plus one panel per plugin, keyed by the plugin id. */
+type PanelId = string;
 
-/** Where panels go until the user moves them: welcome centred, clock top right. */
-const defaults: Record<PanelId, PanelLayout> = {
+const DEFAULT_PLUGIN_SIZE: [number, number] = [320, 240];
+
+/** Where built-in panels go until the user moves them. */
+const builtIn: Record<string, PanelLayout> = {
   welcome: { placement: { h: 'center', v: 'center', dx: 0, dy: 0 }, pinned: false },
   clock: { placement: { h: 'right', v: 'top', dx: 16, dy: 16 }, pinned: false },
-  plugins: { placement: { h: 'left', v: 'top', dx: 16, dy: 16 }, pinned: false },
 };
 
-/** Spike (ADR 0003): installed plugins, shown in one test panel. */
+/** Default spot of a panel: built-in ones by name, plugins cascade from the top left. */
+function defaultLayout(id: PanelId, plugins: PluginManifest[]): PanelLayout {
+  const known = builtIn[id];
+  if (known) return known;
+  const index = Math.max(
+    0,
+    plugins.findIndex((plugin) => plugin.id === id),
+  );
+  const offset = 16 + 32 * index;
+  return { placement: { h: 'left', v: 'top', dx: offset, dy: offset }, pinned: false };
+}
+
+/** Installed plugins, and the broker relaying their calls (ADR 0003). */
 function usePlugins(): PluginManifest[] {
   const [plugins, setPlugins] = useState<PluginManifest[]>([]);
   useEffect(() => startBroker(), []);
@@ -55,7 +68,9 @@ function useViewport(): Size {
 }
 
 /** The saved layout (null until loaded) and a setter that also saves it. */
-function useLayout(): [Layout | null, (id: PanelId, change: Partial<PanelLayout>) => void] {
+function useLayout(
+  defaults: (id: PanelId) => PanelLayout,
+): [Layout | null, (id: PanelId, change: Partial<PanelLayout>) => void] {
   const [layout, setLayout] = useState<Layout | null>(null);
 
   useEffect(() => {
@@ -74,7 +89,7 @@ function useLayout(): [Layout | null, (id: PanelId, change: Partial<PanelLayout>
 
   const update = (id: PanelId, change: Partial<PanelLayout>) => {
     if (!layout) return;
-    const next = { ...layout, [id]: { ...(layout[id] ?? defaults[id]), ...change } };
+    const next = { ...layout, [id]: { ...(layout[id] ?? defaults(id)), ...change } };
     setLayout(next);
     saveLayout(next).catch((error: unknown) =>
       console.error('Cannot save the panel layout:', error),
@@ -87,16 +102,19 @@ function useLayout(): [Layout | null, (id: PanelId, change: Partial<PanelLayout>
 export function App() {
   const { mode, visibility } = useOverlayStatus();
   const viewport = useViewport();
-  const [layout, updateLayout] = useLayout();
   const plugins = usePlugins();
+  const defaults = (id: PanelId) => defaultLayout(id, plugins);
+  const [layout, updateLayout] = useLayout(defaults);
   const lastRegions = useRef<Rect[] | null>(null);
   const restorePending = useRef(true);
 
-  const panel = (id: PanelId) => layout?.[id] ?? defaults[id];
+  const panel = (id: PanelId) => layout?.[id] ?? defaults(id);
   const summoned = visibility === 'summoned';
   // Pinned panels stay rendered while hidden (the window is unmapped then):
   // their rectangles are needed to bring them back at startup.
   const visible = (id: PanelId) => layout !== null && (summoned || panel(id).pinned);
+  // What the user actually sees (the window is unmapped while hidden).
+  const onScreen = (id: PanelId) => summoned || (visibility === 'pinned' && panel(id).pinned);
 
   // Tell the core where the pinned panels are: in pinned mode they are the
   // only areas that take clicks. The first report after loading the layout
@@ -119,17 +137,8 @@ export function App() {
     }
   }, [summoned]);
 
-  // Hide on key *release*: hiding on keydown unmaps the window before the
-  // release arrives, WebKitGTK then believes Escape is still held and drops
-  // the next press after the overlay is shown again.
-  useEffect(() => {
-    const onKeyUp = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      void (summoned ? dismissOverlay() : releaseKeyboard());
-    };
-    window.addEventListener('keyup', onKeyUp);
-    return () => window.removeEventListener('keyup', onKeyUp);
-  }, [summoned]);
+  // Escape is handled by the core on the GTK window (it must also work while
+  // a plugin's iframe has the focus, which this page cannot see).
 
   // A pinned panel gives the keyboard back as soon as the pointer leaves it.
   const onLeave = summoned ? undefined : () => void releaseKeyboard();
@@ -164,13 +173,23 @@ export function App() {
           </dl>
         </Panel>
       )}
-      {plugins.length > 0 && visible('plugins') && (
-        <Panel title="Plugins (spike)" width={360} {...panelProps('plugins')}>
-          {plugins.map((plugin) => (
-            <PluginFrame key={plugin.id} plugin={plugin} height={220} />
-          ))}
-        </Panel>
-      )}
+      {/* Plugin panels stay loaded while hidden, so plugins keep their state
+          and get onHide; they are only made invisible. */}
+      {layout !== null &&
+        plugins.map((plugin) => {
+          const [width, height] = plugin.panel.defaultSize ?? DEFAULT_PLUGIN_SIZE;
+          return (
+            <Panel
+              key={plugin.id}
+              title={plugin.name}
+              width={width}
+              hidden={!visible(plugin.id)}
+              {...panelProps(plugin.id)}
+            >
+              <PluginFrame plugin={plugin} height={height} visible={onScreen(plugin.id)} />
+            </Panel>
+          );
+        })}
       {visible('clock') && (
         <Panel title="Clock" width={200} {...panelProps('clock')}>
           <Clock running={visibility !== 'hidden'} />

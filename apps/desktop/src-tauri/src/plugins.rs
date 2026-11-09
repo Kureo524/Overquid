@@ -15,12 +15,34 @@ use tauri::http::{Response, StatusCode, header};
 
 pub const SCHEME: &str = "overquid-plugin";
 
+/// What a plugin may ask the core for. A manifest naming anything else is
+/// rejected as a whole.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Permission {
+    Storage,
+    Hotkeys,
+    Notifications,
+    Context,
+    Events,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PanelSpec {
+    pub default_size: Option<[u32; 2]>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Manifest {
     pub id: String,
     pub name: String,
     pub version: String,
     pub entry: String,
+    #[serde(default)]
+    pub panel: PanelSpec,
+    #[serde(default)]
+    pub permissions: Vec<Permission>,
     #[serde(default)]
     pub network: Vec<String>,
 }
@@ -92,6 +114,57 @@ pub fn load_manifest(root: &Path, id: &str) -> Option<Manifest> {
     let text = fs::read_to_string(root.join(id).join("manifest.json")).ok()?;
     let manifest: Manifest = serde_json::from_str(&text).ok()?;
     (manifest.id == id).then_some(manifest)
+}
+
+/// Runs a call relayed by the host for `manifest`'s plugin, after checking it
+/// against the manifest's permissions.
+pub fn call(
+    manifest: &Manifest,
+    storage: &crate::plugin_storage::PluginStorage,
+    method: &str,
+    args: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    use serde_json::Value;
+
+    let required = match method {
+        "echo" | "log" => None,
+        "storage.get" | "storage.set" | "storage.remove" | "storage.keys" => {
+            Some(Permission::Storage)
+        }
+        other => return Err(format!("unknown method '{other}'")),
+    };
+    if let Some(permission) = required
+        && !manifest.permissions.contains(&permission)
+    {
+        let name = serde_json::to_value(permission)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_owned))
+            .unwrap_or_default();
+        return Err(format!(
+            "'{method}' needs the {name} permission, which is not in the manifest"
+        ));
+    }
+    let key = || {
+        args.get("key")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("'{method}' needs a string 'key'"))
+    };
+    let id = manifest.id.as_str();
+    match method {
+        "echo" => Ok(serde_json::json!({ "pluginId": id, "args": args })),
+        "log" => {
+            eprintln!("[plugin {id}] {args}");
+            Ok(Value::Null)
+        }
+        "storage.get" => Ok(storage.get(id, key()?)?.unwrap_or(Value::Null)),
+        "storage.set" => {
+            let value = args.get("value").cloned().unwrap_or(Value::Null);
+            storage.set(id, key()?, value).map(|()| Value::Null)
+        }
+        "storage.remove" => storage.remove(id, key()?).map(|()| Value::Null),
+        "storage.keys" => Ok(serde_json::json!(storage.keys(id)?)),
+        _ => unreachable!("methods are matched above"),
+    }
 }
 
 /// Every valid plugin under `root` (sub-folder named after a matching manifest).
@@ -252,6 +325,51 @@ mod tests {
         assert!(!csp.contains("evil"));
         assert!(csp.contains("script-src overquid-plugin://localhost/com.example.notes/;"));
         assert!(content_security_policy("a.b", &[]).contains("connect-src 'none'"));
+    }
+
+    #[test]
+    fn unknown_permission_rejects_the_manifest() {
+        let root = fixture("permission");
+        fs::create_dir_all(root.join("com.bad")).unwrap();
+        fs::write(
+            root.join("com.bad/manifest.json"),
+            r#"{"id":"com.bad","name":"Bad","version":"1","entry":"i.html","permissions":["root"]}"#,
+        )
+        .unwrap();
+        assert!(load_manifest(&root, "com.bad").is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn calls_are_checked_against_permissions() {
+        use crate::plugin_storage::PluginStorage;
+        use serde_json::json;
+
+        let root = fixture("calls");
+        let storage = PluginStorage::new(&root.join("data"));
+        let mut manifest = load_manifest(&root, "com.example.notes").unwrap();
+        let set = json!({ "key": "count", "value": 2 });
+
+        let denied = call(&manifest, &storage, "storage.set", &set).unwrap_err();
+        assert!(denied.contains("storage permission"), "{denied}");
+        assert!(call(&manifest, &storage, "fs.read", &json!({})).is_err());
+        assert_eq!(
+            call(&manifest, &storage, "echo", &json!(1)).unwrap()["pluginId"],
+            "com.example.notes"
+        );
+
+        manifest.permissions.push(Permission::Storage);
+        call(&manifest, &storage, "storage.set", &set).unwrap();
+        let got = call(
+            &manifest,
+            &storage,
+            "storage.get",
+            &json!({ "key": "count" }),
+        )
+        .unwrap();
+        assert_eq!(got, json!(2));
+        assert!(call(&manifest, &storage, "storage.get", &json!({})).is_err());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
