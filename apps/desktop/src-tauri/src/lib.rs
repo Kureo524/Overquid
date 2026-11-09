@@ -7,7 +7,7 @@ mod plugins;
 mod state;
 mod web_panels;
 
-use tauri::{Manager, Runtime, State, WebviewWindow};
+use tauri::{Emitter, Manager, Runtime, State, WebviewWindow};
 
 use cli::{CliError, Command};
 use layout::LayoutStore;
@@ -87,12 +87,39 @@ fn web_panel<R: Runtime>(
         .join("web")
         .join(&plugin_id);
     let (tx, rx) = std::sync::mpsc::channel();
+    let events = app.clone();
     app.run_on_main_thread(move || {
         let dirs = web_panels::DataDirs {
             data: base.join("data"),
             cache: base.join("cache"),
         };
-        let _ = tx.send(web_panels::place(&plugin_id, &spec, dirs, rect));
+        let on_change = move |page: web_panels::PageState| {
+            let _ = events.emit(WEB_PAGE_EVENT, page);
+        };
+        let _ = tx.send(web_panels::place(&plugin_id, &spec, dirs, rect, on_change));
+    })
+    .map_err(|error| error.to_string())?;
+    rx.recv().map_err(|error| error.to_string())?
+}
+
+/// Sent with a `web_panels::PageState` whenever a web panel's page changes.
+const WEB_PAGE_EVENT: &str = "web-page";
+
+/// Runs a browser button or address bar entry (ADR 0004).
+#[tauri::command(async)]
+fn web_navigate<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    plugin_id: String,
+    navigation: web_panels::Navigation,
+) -> Result<(), String> {
+    let (_, manifest) = plugins::find(&plugin_roots(&app), &plugin_id)
+        .ok_or_else(|| format!("unknown plugin '{plugin_id}'"))?;
+    let spec = manifest
+        .web
+        .ok_or_else(|| format!("'{plugin_id}' is not a web plugin"))?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(web_panels::navigate(&plugin_id, &spec, navigation));
     })
     .map_err(|error| error.to_string())?;
     rx.recv().map_err(|error| error.to_string())?
@@ -199,7 +226,8 @@ pub fn run() {
             save_layout,
             plugin_call,
             list_plugins,
-            web_panel
+            web_panel,
+            web_navigate
         ])
         .run(tauri::generate_context!())
         .expect("error while running Overquid");

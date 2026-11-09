@@ -34,6 +34,7 @@
       "../../../plugins/dev.overquid.clock/manifest.json": "plugins/dev.overquid.clock/manifest.json",
       "../../../plugins/dev.overquid.clock/dist/": "plugins/dev.overquid.clock/dist/",
       "../../../plugins/dev.overquid.discord/manifest.json": "plugins/dev.overquid.discord/manifest.json",
+      "../../../plugins/dev.overquid.browser/manifest.json": "plugins/dev.overquid.browser/manifest.json",
       "../../../plugins/dev.overquid.youtube/manifest.json": "plugins/dev.overquid.youtube/manifest.json"
     }
   }

@@ -9,17 +9,47 @@
 
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
+
 /// Where a web plugin keeps its cookies, storage and cache.
 pub struct DataDirs {
     pub data: PathBuf,
     pub cache: PathBuf,
 }
 
+/// What a web panel shows, sent to the overlay on every change (a browser's
+/// address bar and buttons follow it).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PageState {
+    pub plugin_id: String,
+    pub url: String,
+    pub title: String,
+    pub can_go_back: bool,
+    pub can_go_forward: bool,
+    pub loading: bool,
+}
+
+/// A browser button or address bar entry.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum Navigation {
+    /// Text typed in the address bar: an address or a search.
+    Load {
+        input: String,
+    },
+    Back,
+    Forward,
+    Reload,
+    Stop,
+    Home,
+}
+
 /// Pauses every audio and video element of the page.
 const PAUSE_MEDIA: &str = "document.querySelectorAll('video, audio').forEach((m) => m.pause())";
 
 #[cfg(target_os = "linux")]
-pub use linux::{install, place, unload_all};
+pub use linux::{install, navigate, place, unload_all};
 
 #[cfg(not(target_os = "linux"))]
 pub fn unload_all(done: impl FnOnce() + 'static) {
@@ -29,9 +59,19 @@ pub fn unload_all(done: impl FnOnce() + 'static) {
 #[cfg(not(target_os = "linux"))]
 pub fn place(
     _id: &str,
-    _spec: &WebSpec,
+    _spec: &crate::plugins::WebSpec,
     _dirs: DataDirs,
-    _rect: Option<Rect>,
+    _rect: Option<crate::state::Rect>,
+    _on_change: impl Fn(PageState) + 'static,
+) -> Result<(), String> {
+    Err("web panels are only supported on Linux for now".into())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn navigate(
+    _id: &str,
+    _spec: &crate::plugins::WebSpec,
+    _navigation: Navigation,
 ) -> Result<(), String> {
     Err("web panels are only supported on Linux for now".into())
 }
@@ -52,8 +92,8 @@ mod linux {
         WebsiteDataManagerExt,
     };
 
-    use super::{DataDirs, PAUSE_MEDIA};
-    use crate::plugins::{WebSpec, host_allowed, https_host};
+    use super::{DataDirs, Navigation, PAUSE_MEDIA, PageState};
+    use crate::plugins::{WebSpec, host_allowed, https_host, resolve_input};
     use crate::state::Rect;
 
     struct State {
@@ -108,6 +148,7 @@ mod linux {
         spec: &WebSpec,
         dirs: DataDirs,
         rect: Option<Rect>,
+        on_change: impl Fn(PageState) + 'static,
     ) -> Result<(), String> {
         STATE.with(|state| {
             let mut state = state.borrow_mut();
@@ -131,6 +172,8 @@ mod linux {
             };
             let view = state.views.entry(id.to_owned()).or_insert_with(|| {
                 let view = create(spec, &dirs);
+                watch(&view, id, on_change);
+                view.load_uri(&spec.url);
                 state.overlay.add_overlay(&view);
                 view
             });
@@ -148,6 +191,54 @@ mod linux {
             view.queue_resize();
             Ok(())
         })
+    }
+
+    /// Runs a browser button or address bar entry. Browsers only: other web
+    /// panels stay on their app.
+    pub fn navigate(id: &str, spec: &WebSpec, navigation: Navigation) -> Result<(), String> {
+        let browser = spec.browser.as_ref().ok_or("not a browser")?;
+        let view = STATE
+            .with(|state| {
+                state
+                    .borrow()
+                    .as_ref()
+                    .and_then(|state| state.views.get(id).cloned())
+            })
+            .ok_or("this web panel is not open")?;
+        match navigation {
+            Navigation::Load { input } => view.load_uri(&resolve_input(&input, &browser.search)),
+            Navigation::Back => view.go_back(),
+            Navigation::Forward => view.go_forward(),
+            Navigation::Reload => view.reload(),
+            Navigation::Stop => view.stop_loading(),
+            Navigation::Home => view.load_uri(&spec.url),
+        }
+        Ok(())
+    }
+
+    /// Reports the page's address, title, history and loading state on every change.
+    fn watch(view: &WebView, id: &str, on_change: impl Fn(PageState) + 'static) {
+        let id = id.to_owned();
+        let report = Rc::new(move |view: &WebView| {
+            on_change(PageState {
+                plugin_id: id.clone(),
+                url: view.uri().map(String::from).unwrap_or_default(),
+                title: view.title().map(String::from).unwrap_or_default(),
+                can_go_back: view.can_go_back(),
+                can_go_forward: view.can_go_forward(),
+                loading: view.is_loading(),
+            });
+        });
+        let on = |report: &Rc<dyn Fn(&WebView)>| {
+            let report = report.clone();
+            move |view: &WebView| report(view)
+        };
+        let report: Rc<dyn Fn(&WebView)> = report;
+        view.connect_uri_notify(on(&report));
+        view.connect_title_notify(on(&report));
+        view.connect_is_loading_notify(on(&report));
+        let report_load = on(&report);
+        view.connect_load_changed(move |view, _| report_load(view));
     }
 
     /// Unloads every web page, then calls `done` once their storage had time
@@ -216,7 +307,8 @@ mod linux {
         }
 
         let hosts = spec.hosts.clone();
-        view.connect_decide_policy(move |_, decision, kind| {
+        let browser = spec.browser.is_some();
+        view.connect_decide_policy(move |view, decision, kind| {
             let Some(navigation) = decision.downcast_ref::<NavigationPolicyDecision>() else {
                 return false;
             };
@@ -226,8 +318,19 @@ mod linux {
             let Some(uri) = action.request().and_then(|request| request.uri()) else {
                 return false;
             };
-            let leaves = !https_host(&uri).is_some_and(|host| host_allowed(&host, &hosts));
             let new_window = kind == PolicyDecisionType::NewWindowAction;
+            if browser {
+                // A browser keeps everything in its panel: one page at a time.
+                if new_window {
+                    decision.ignore();
+                    if uri.starts_with("https://") || uri.starts_with("http://") {
+                        view.load_uri(&uri);
+                    }
+                    return true;
+                }
+                return false;
+            }
+            let leaves = !https_host(&uri).is_some_and(|host| host_allowed(&host, &hosts));
             let user_link = kind == PolicyDecisionType::NavigationAction
                 && action.navigation_type() == NavigationType::LinkClicked
                 && leaves;
@@ -254,7 +357,6 @@ mod linux {
                 view.load_html(CRASHED_PAGE, None);
             }
         });
-        view.load_uri(&spec.url);
         view
     }
 

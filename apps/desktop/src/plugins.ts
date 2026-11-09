@@ -9,7 +9,13 @@ export interface PluginManifest {
   /** Iframe plugin: its entry file. Exactly one of `entry` and `web`. */
   entry?: string;
   /** Web panel: an official web app shown in a native view (ADR 0004). */
-  web?: { url: string; hosts: string[]; pauseOnHide: boolean };
+  web?: {
+    url: string;
+    hosts: string[];
+    pauseOnHide: boolean;
+    /** A browser: any site, with an address bar. */
+    browser?: { search: string };
+  };
   panel: {
     defaultSize?: [number, number] | null;
     position?: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'center' | null;

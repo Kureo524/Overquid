@@ -51,10 +51,64 @@ pub struct PanelSpec {
 pub struct WebSpec {
     pub url: String,
     /// Host names the panel may navigate to (`example.com`, `*.example.com`).
+    /// Links elsewhere open in the system browser. Unused by a browser.
+    #[serde(default)]
     pub hosts: Vec<String>,
     /// Pause audio and video when the panel is hidden.
     #[serde(default)]
     pub pause_on_hide: bool,
+    /// A browser: any site, an address bar, and links that stay in the panel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browser: Option<BrowserSpec>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserSpec {
+    /// Search URL for what is typed in the address bar: `{query}` is replaced.
+    pub search: String,
+}
+
+/// What to load for text typed in a browser's address bar: a web address as
+/// is, a bare domain over `https`, anything else as a search.
+pub fn resolve_input(input: &str, search: &str) -> String {
+    let input = input.trim();
+    let lower = input.to_ascii_lowercase();
+    if lower.starts_with("https://") || lower.starts_with("http://") {
+        return input.to_owned();
+    }
+    if looks_like_address(input) {
+        return format!("https://{input}");
+    }
+    let query = percent_encoding::utf8_percent_encode(input, percent_encoding::NON_ALPHANUMERIC)
+        .to_string();
+    search.replace("{query}", &query)
+}
+
+/// `example.com`, `example.com/path`, `localhost:8080`: no spaces, no other
+/// scheme, and a host that is a dotted name or `localhost`.
+fn looks_like_address(input: &str) -> bool {
+    if input.is_empty() || input.contains(char::is_whitespace) || input.contains("://") {
+        return false;
+    }
+    let authority = input.split(['/', '?', '#']).next().unwrap_or_default();
+    if authority.contains('@') {
+        return false;
+    }
+    let mut parts = authority.splitn(2, ':');
+    let host = parts.next().unwrap_or_default();
+    if let Some(port) = parts.next()
+        && (port.is_empty() || !port.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return false;
+    }
+    host.eq_ignore_ascii_case("localhost")
+        || (host.contains('.')
+            && !host.starts_with('.')
+            && !host.ends_with('.')
+            && host
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-'))
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -149,12 +203,22 @@ pub fn load_manifest(root: &Path, id: &str) -> Option<Manifest> {
 fn is_coherent(manifest: &Manifest) -> bool {
     match (&manifest.entry, &manifest.web) {
         (Some(_), None) => true,
-        (None, Some(web)) => {
-            web.hosts
-                .iter()
-                .all(|pattern| is_valid_host_pattern(pattern))
-                && https_host(&web.url).is_some_and(|host| host_allowed(&host, &web.hosts))
-        }
+        (None, Some(web)) => match &web.browser {
+            // A browser goes anywhere, but starts and searches over https.
+            Some(browser) => {
+                https_host(&web.url).is_some()
+                    && https_host(&browser.search).is_some()
+                    && browser.search.contains("{query}")
+            }
+            None => {
+                !web.hosts.is_empty()
+                    && web
+                        .hosts
+                        .iter()
+                        .all(|pattern| is_valid_host_pattern(pattern))
+                    && https_host(&web.url).is_some_and(|host| host_allowed(&host, &web.hosts))
+            }
+        },
         _ => false,
     }
 }
@@ -543,6 +607,42 @@ mod tests {
     }
 
     #[test]
+    fn resolves_address_bar_input() {
+        let search = "https://duckduckgo.com/?q={query}";
+        let resolve = |input| resolve_input(input, search);
+        assert_eq!(resolve("https://example.com/a"), "https://example.com/a");
+        assert_eq!(resolve("  HTTP://example.com "), "HTTP://example.com");
+        assert_eq!(resolve("example.com"), "https://example.com");
+        assert_eq!(
+            resolve("wiki.example.org/x?y=1"),
+            "https://wiki.example.org/x?y=1"
+        );
+        assert_eq!(resolve("localhost:8080"), "https://localhost:8080");
+        assert_eq!(resolve("rust"), "https://duckduckgo.com/?q=rust");
+        assert_eq!(
+            resolve("rust lang.org"),
+            "https://duckduckgo.com/?q=rust%20lang%2Eorg"
+        );
+        // Other schemes are never loaded: they become searches.
+        assert_eq!(
+            resolve("javascript:alert(1)"),
+            "https://duckduckgo.com/?q=javascript%3Aalert%281%29"
+        );
+        assert_eq!(
+            resolve("file:///etc/passwd"),
+            "https://duckduckgo.com/?q=file%3A%2F%2F%2Fetc%2Fpasswd"
+        );
+        assert_eq!(
+            resolve("user@evil.com"),
+            "https://duckduckgo.com/?q=user%40evil%2Ecom"
+        );
+        assert_eq!(
+            resolve("example.com:abc"),
+            "https://duckduckgo.com/?q=example%2Ecom%3Aabc"
+        );
+    }
+
+    #[test]
     fn web_manifests_must_be_coherent() {
         let root = fixture("web");
         let write = |id: &str, body: &str| {
@@ -571,11 +671,23 @@ mod tests {
             r#""web":{"url":"https://evil.com/","hosts":["discord.com"]}"#,
         );
         write(
+            "dev.browser",
+            r#""web":{"url":"https://duckduckgo.com/","browser":{"search":"https://duckduckgo.com/?q={query}"}}"#,
+        );
+        write("dev.nohosts", r#""web":{"url":"https://discord.com/"}"#);
+        write(
+            "dev.badsearch",
+            r#""web":{"url":"https://duckduckgo.com/","browser":{"search":"https://duckduckgo.com/"}}"#,
+        );
+        write(
             "dev.badhost",
             r#""web":{"url":"https://discord.com/","hosts":["discord.com","https://x"]}"#,
         );
         assert!(load_manifest(&root, "dev.ok").unwrap().web.is_some());
+        assert!(load_manifest(&root, "dev.browser").unwrap().web.is_some());
         for id in [
+            "dev.nohosts",
+            "dev.badsearch",
             "dev.both",
             "dev.none",
             "dev.http",
