@@ -13,7 +13,7 @@ import { WebSlot } from './WebSlot';
 
 /** What the core reports about a web panel's page (`web_panels::PageState`). */
 interface PageState {
-  pluginId: string;
+  panelId: string;
   url: string;
   title: string;
   canGoBack: boolean;
@@ -25,26 +25,26 @@ type Navigation =
   { kind: 'load'; input: string } | { kind: 'back' | 'forward' | 'reload' | 'stop' | 'home' };
 
 interface BrowserProps {
-  pluginId: string;
+  panelId: string;
   name: string;
   visible: boolean;
 }
 
 /** The current page of a web panel, as reported by the core. */
-function usePage(pluginId: string): PageState | null {
+function usePage(panelId: string): PageState | null {
   const [page, setPage] = useState<PageState | null>(null);
   useEffect(() => {
     const stop = listen<PageState>('web-page', (event) => {
-      if (event.payload.pluginId === pluginId) setPage(event.payload);
+      if (event.payload.panelId === panelId) setPage(event.payload);
     });
     return () => void stop.then((unlisten) => unlisten());
-  }, [pluginId]);
+  }, [panelId]);
   return page;
 }
 
 /** A browser plugin: navigation bar over a web panel (ADR 0004). */
-export function Browser({ pluginId, name, visible }: BrowserProps) {
-  const page = usePage(pluginId);
+export function Browser({ panelId, name, visible }: BrowserProps) {
+  const page = usePage(panelId);
   const filter = useContentFilter();
   const exceptions = useFilterExceptions();
   const site = page ? siteOf(page.url) : null;
@@ -56,8 +56,8 @@ export function Browser({ pluginId, name, visible }: BrowserProps) {
   const selectOnRelease = useRef(false);
 
   const navigate = (navigation: Navigation) => {
-    invoke('web_navigate', { pluginId, navigation }).catch((error: unknown) =>
-      console.error(`Browser ${pluginId}:`, error),
+    invoke('web_navigate', { panelId, navigation }).catch((error: unknown) =>
+      console.error(`Browser ${panelId}:`, error),
     );
   };
 
@@ -130,7 +130,7 @@ export function Browser({ pluginId, name, visible }: BrowserProps) {
           </BarButton>
         )}
       </form>
-      <WebSlot pluginId={pluginId} name={name} visible={visible} />
+      <WebSlot panelId={panelId} name={name} visible={visible} />
     </div>
   );
 }

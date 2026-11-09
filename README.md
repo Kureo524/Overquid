@@ -48,6 +48,9 @@ Save several layouts ("Work", "Game") and bind them to the app in the foreground
 | YouTube | The official YouTube site, in a panel; videos pause when the panel is hidden            |
 | Browser | Any site in a panel: address bar (address or DuckDuckGo search), back, forward, reload  |
 
+The browser and YouTube can be opened several times ("Add panel" offers "Browser 2"); instances share their browsing
+data (one login) and each has its own page.
+
 Discord and YouTube refuse to be embedded in a page, so they run as **web panels**: native WebKitGTK views placed by
 the core over their panel, with their own browsing data and no access to the app (Linux only for now). Links to other
 sites open in your browser.

@@ -24,6 +24,7 @@ import {
   type Overlays,
 } from './overlays';
 import { OverlayBar } from './OverlayBar';
+import { instanceOf, nextPanelId, panelIdsIn, panelTitle, pluginOf } from './instances';
 import {
   regionsOf,
   releaseKeyboard,
@@ -70,16 +71,28 @@ const atPosition: Record<NonNullable<PluginManifest['panel']['position']>, Place
 function defaultLayout(id: PanelId, plugins: PluginManifest[]): PanelLayout {
   const known = builtIn[id];
   if (known) return known;
+  const pluginId = pluginOf(id);
   const index = Math.max(
     0,
-    plugins.findIndex((plugin) => plugin.id === id),
+    plugins.findIndex((plugin) => plugin.id === pluginId),
   );
   const position = plugins[index]?.panel.position;
-  const offset = 32 * index;
+  // Another instance opens a little lower and to the right of the first one.
+  const shift = 32 * (instanceOf(id) - 1);
+  const placement = position
+    ? atPosition[position]
+    : {
+        h: 'left' as const,
+        v: 'top' as const,
+        dx: MARGIN + 32 * index,
+        dy: BELOW_BAR + 32 * index,
+      };
   return {
-    placement: position
-      ? atPosition[position]
-      : { h: 'left', v: 'top', dx: MARGIN + offset, dy: BELOW_BAR + offset },
+    placement: {
+      ...placement,
+      dx: placement.dx + (placement.h === 'right' ? -shift : shift),
+      dy: placement.dy + (placement.v === 'bottom' ? -shift : shift),
+    },
     pinned: false,
   };
 }
@@ -279,9 +292,27 @@ export function App() {
     },
   });
 
-  const panelNames: { id: PanelId; name: string }[] = [
-    { id: 'welcome', name: 'Overquid' },
-    ...plugins.map((plugin) => ({ id: plugin.id, name: plugin.name })),
+  // Every plugin's first instance stays loaded; other instances exist while
+  // some overlay has them (ADR 0007).
+  const used = overlays ? panelIdsIn(overlays) : new Set<string>();
+  const instances = plugins.flatMap((plugin) => [
+    { id: plugin.id, plugin },
+    ...(plugin.panel.multiple
+      ? [...used]
+          .filter((id) => pluginOf(id) === plugin.id && instanceOf(id) > 1)
+          .sort((a, b) => instanceOf(a) - instanceOf(b))
+          .map((id) => ({ id, plugin }))
+      : []),
+  ]);
+  // What "Add panel" offers: a missing panel, or another instance.
+  const addable: { id: PanelId; name: string }[] = [
+    ...(inOverlay('welcome') ? [] : [{ id: 'welcome', name: 'Overquid' }]),
+    ...plugins.flatMap((plugin) => {
+      if (!inOverlay(plugin.id)) return [{ id: plugin.id, name: plugin.name }];
+      if (!plugin.panel.multiple) return [];
+      const id = nextPanelId(plugin.id, used);
+      return [{ id, name: panelTitle(plugin.name, id) }];
+    }),
   ];
 
   return (
@@ -290,7 +321,7 @@ export function App() {
         <OverlayBar
           overlays={overlays.overlays}
           active={overlays.active}
-          addable={panelNames.filter((entry) => !inOverlay(entry.id))}
+          addable={addable}
           onSwitch={(id) => changeOverlays({ ...overlays, active: id })}
           onCreate={() => changeOverlays(createOverlay(overlays))}
           onRename={(id, name) => commit(renameOverlay(overlays, id, name))}
@@ -328,25 +359,26 @@ export function App() {
       {/* Plugin panels stay loaded while hidden, so plugins keep their state
           and get onHide; they are only made invisible. */}
       {overlays !== null &&
-        plugins.map((plugin) => {
+        instances.map(({ id, plugin }) => {
           const [width, height] = plugin.panel.defaultSize ?? DEFAULT_PLUGIN_SIZE;
-          const size = panel(plugin.id).size ?? { width, height };
+          const size = panel(id).size ?? { width, height };
+          const title = panelTitle(plugin.name, id);
           return (
             <Panel
-              key={plugin.id}
-              title={plugin.name}
+              key={id}
+              title={title}
               width={size.width}
               contentHeight={size.height}
-              onResize={(next, placement) => updateLayout(plugin.id, { size: next, placement })}
-              hidden={!visible(plugin.id)}
-              {...panelProps(plugin.id)}
+              onResize={(next, placement) => updateLayout(id, { size: next, placement })}
+              hidden={!visible(id)}
+              {...panelProps(id)}
             >
               {plugin.web?.browser ? (
-                <Browser pluginId={plugin.id} name={plugin.name} visible={onScreen(plugin.id)} />
+                <Browser panelId={id} name={title} visible={onScreen(id)} />
               ) : plugin.web ? (
-                <WebSlot pluginId={plugin.id} name={plugin.name} visible={onScreen(plugin.id)} />
+                <WebSlot panelId={id} name={title} visible={onScreen(id)} />
               ) : (
-                <PluginFrame plugin={plugin} visible={onScreen(plugin.id)} />
+                <PluginFrame plugin={plugin} visible={onScreen(id)} />
               )}
             </Panel>
           );

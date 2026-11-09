@@ -43,6 +43,25 @@ pub enum PanelPosition {
 pub struct PanelSpec {
     pub default_size: Option<[u32; 2]>,
     pub position: Option<PanelPosition>,
+    /// Several panels of this plugin may be open at once (ADR 0007).
+    #[serde(default)]
+    pub multiple: bool,
+}
+
+/// The plugin a panel belongs to, and its instance number: `id` is instance
+/// 1, `id#2` instance 2… (ADR 0007). `None` for anything else.
+pub fn split_panel_id(panel: &str) -> Option<(&str, u32)> {
+    let (plugin, instance) = match panel.split_once('#') {
+        None => (panel, 1),
+        Some((plugin, number)) => {
+            // Canonical numbers only: `#2`, not `#02` or `#+2`.
+            if !number.bytes().all(|b| b.is_ascii_digit()) || number.starts_with('0') {
+                return None;
+            }
+            (plugin, number.parse().ok().filter(|n| *n >= 2)?)
+        }
+    };
+    is_valid_id(plugin).then_some((plugin, instance))
 }
 
 /// A web panel (ADR 0004): an official web app shown in a native view.
@@ -604,6 +623,33 @@ mod tests {
         );
         assert_eq!(https_host("http://discord.com/"), None);
         assert_eq!(https_host("https://user@evil.com/"), None);
+    }
+
+    #[test]
+    fn splits_panel_ids() {
+        assert_eq!(
+            split_panel_id("dev.overquid.browser"),
+            Some(("dev.overquid.browser", 1))
+        );
+        assert_eq!(
+            split_panel_id("dev.overquid.browser#2"),
+            Some(("dev.overquid.browser", 2))
+        );
+        assert_eq!(
+            split_panel_id("dev.overquid.browser#12"),
+            Some(("dev.overquid.browser", 12))
+        );
+        for bad in [
+            "dev.overquid.browser#1",
+            "dev.overquid.browser#02",
+            "dev.overquid.browser#",
+            "dev.overquid.browser#x",
+            "a#2#3",
+            "../x#2",
+            "Bad#2",
+        ] {
+            assert_eq!(split_panel_id(bad), None, "{bad}");
+        }
     }
 
     #[test]

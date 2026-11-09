@@ -22,7 +22,8 @@ pub struct DataDirs {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PageState {
-    pub plugin_id: String,
+    /// The panel showing the page (ADR 0007: `plugin` or `plugin#n`).
+    pub panel_id: String,
     pub url: String,
     pub title: String,
     pub can_go_back: bool,
@@ -104,7 +105,9 @@ pub enum Navigation {
 const PAUSE_MEDIA: &str = "document.querySelectorAll('video, audio').forEach((m) => m.pause())";
 
 #[cfg(target_os = "linux")]
-pub use linux::{install, navigate, place, set_content_filter, set_filter_exceptions, unload_all};
+pub use linux::{
+    close, install, navigate, place, set_content_filter, set_filter_exceptions, unload_all,
+};
 
 #[cfg(not(target_os = "linux"))]
 pub fn set_filter_exceptions(_sites: Vec<String>, _changed: &str) {}
@@ -127,8 +130,12 @@ pub fn unload_all(done: impl FnOnce() + 'static) {
 }
 
 #[cfg(not(target_os = "linux"))]
+pub fn close(_id: &str) {}
+
+#[cfg(not(target_os = "linux"))]
 pub fn place(
     _id: &str,
+    _plugin: &str,
     _spec: &crate::plugins::WebSpec,
     _dirs: DataDirs,
     _rect: Option<crate::state::Rect>,
@@ -173,7 +180,11 @@ mod linux {
 
     struct State {
         overlay: gtk::Overlay,
+        /// By panel id.
         views: HashMap<String, WebView>,
+        /// By plugin id: the instances of a plugin share its browsing data, and
+        /// WebKit allows one data manager per directory.
+        contexts: HashMap<String, WebContext>,
     }
 
     // GTK objects live on the main thread only; so does this state.
@@ -238,14 +249,17 @@ mod linux {
             *state.borrow_mut() = Some(State {
                 overlay,
                 views: HashMap::new(),
+                contexts: HashMap::new(),
             });
         });
     }
 
-    /// Shows the plugin's web view over `rect` (creating it the first time),
-    /// or hides it when `rect` is `None`. Main thread only.
+    /// Shows panel `id`'s web view over `rect` (creating it the first time),
+    /// or hides it when `rect` is `None`. `plugin` is the panel's plugin, whose
+    /// browsing data the view uses. Main thread only.
     pub fn place(
         id: &str,
+        plugin: &str,
         spec: &WebSpec,
         dirs: DataDirs,
         rect: Option<Rect>,
@@ -272,15 +286,21 @@ mod linux {
                 }
                 return Ok(());
             };
-            let view = state.views.entry(id.to_owned()).or_insert_with(|| {
-                let view = create(spec, &dirs);
+            if !state.views.contains_key(id) {
+                let context = state
+                    .contexts
+                    .entry(plugin.to_owned())
+                    .or_insert_with(|| data_context(&dirs))
+                    .clone();
+                let view = create(spec, &context);
                 watch(&view, id, hooks);
                 // Blocking rules before the first page, not at its start.
                 filter_page(&view);
                 view.load_uri(&spec.url);
                 state.overlay.add_overlay(&view);
-                view
-            });
+                state.views.insert(id.to_owned(), view);
+            }
+            let view = &state.views[id];
             let (x, y, width, height) = rect;
             let holes = holes
                 .iter()
@@ -358,6 +378,26 @@ mod linux {
         })
     }
 
+    /// Destroys panel `id`'s web view: an instance closed for good (ADR 0007).
+    pub fn close(id: &str) {
+        let Some(view) = STATE.with(|state| {
+            state
+                .borrow_mut()
+                .as_mut()
+                .and_then(|state| state.views.remove(id))
+        }) else {
+            return;
+        };
+        let widget: gtk::Widget = view.clone().upcast();
+        RECTS.with(|rects| rects.borrow_mut().retain(|placed| placed.view != widget));
+        APPLIED.with(|applied| applied.borrow_mut().retain(|(known, _)| *known != view));
+        STATE.with(|state| {
+            if let Some(state) = state.borrow().as_ref() {
+                state.overlay.remove(&view);
+            }
+        });
+    }
+
     /// Runs a browser button or address bar entry. Browsers only: other web
     /// panels stay on their app.
     pub fn navigate(id: &str, spec: &WebSpec, navigation: Navigation) -> Result<(), String> {
@@ -424,7 +464,7 @@ mod linux {
         let id = id.to_owned();
         let report = Rc::new(move |view: &WebView| {
             on_change(PageState {
-                plugin_id: id.clone(),
+                panel_id: id.clone(),
                 url: view.uri().map(String::from).unwrap_or_default(),
                 title: view.title().map(String::from).unwrap_or_default(),
                 can_go_back: view.can_go_back(),
@@ -492,7 +532,8 @@ mod linux {
     /// Time left to WebKit to write storage once pages are unloaded.
     const STORAGE_FLUSH: Duration = Duration::from_millis(500);
 
-    fn create(spec: &WebSpec, dirs: &DataDirs) -> WebView {
+    /// A plugin's browsing data: its own directories, persistent cookies.
+    fn data_context(dirs: &DataDirs) -> WebContext {
         let manager = WebsiteDataManager::builder()
             .base_data_directory(dirs.data.to_string_lossy().as_ref())
             .base_cache_directory(dirs.cache.to_string_lossy().as_ref())
@@ -502,8 +543,11 @@ mod linux {
             cookies
                 .set_persistent_storage(&file.to_string_lossy(), CookiePersistentStorage::Sqlite);
         }
-        let context = WebContext::with_website_data_manager(&manager);
-        let view = WebView::with_context(&context);
+        WebContext::with_website_data_manager(&manager)
+    }
+
+    fn create(spec: &WebSpec, context: &WebContext) -> WebView {
+        let view = WebView::with_context(context);
         // Shown only by `place`: showing the overlay window (Tauri's `show`
         // is GTK's `show_all`) must not bring back hidden panels.
         view.set_no_show_all(true);
