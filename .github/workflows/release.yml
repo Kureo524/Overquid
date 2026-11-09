@@ -72,6 +72,9 @@ jobs:
             target/release/bundle/deb/*.deb \
             target/release/bundle/rpm/*.rpm \
             --clobber
+          # The SDK and generator releases are created after the app's and
+          # would be "Latest"; the README's download link points there.
+          gh release edit "$TAG" --latest
 
   npm:
     name: npm packages
