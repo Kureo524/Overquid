@@ -1,0 +1,13 @@
+/* "Encre" design direction: big numbers in Barlow Condensed SemiBold. */
+body {
+  margin: 0;
+  color: #e6eaf2;
+}
+time {
+  display: block;
+  font:
+    600 26px/1.2 'Barlow Condensed',
+    system-ui,
+    sans-serif;
+  font-variant-numeric: tabular-nums;
+}

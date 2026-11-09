@@ -1,0 +1,38 @@
+/* "Encre" design direction: quiet ink, text first. */
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+body {
+  display: flex;
+  flex-direction: column;
+  color: #e6eaf2;
+  font:
+    13px/1.55 system-ui,
+    sans-serif;
+}
+textarea {
+  flex: 1;
+  min-height: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(230, 234, 242, 0.08);
+  border-radius: 10px;
+  background: rgba(230, 234, 242, 0.04);
+  color: inherit;
+  font: inherit;
+  resize: none;
+  outline: none;
+}
+textarea:focus {
+  border-color: rgba(230, 234, 242, 0.15);
+}
+textarea::placeholder {
+  color: #868a98;
+}
+.status {
+  height: 16px;
+  margin: 6px 2px 0;
+  color: #868a98;
+  font-size: 11px;
+}

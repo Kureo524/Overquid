@@ -1,0 +1,62 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Overquid",
+  "mainBinaryName": "overquid",
+  "version": "0.0.0",
+  "identifier": "dev.overquid.app",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm --dir ../.. build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "overlay",
+        "title": "Overquid",
+        "visible": false,
+        "transparent": true,
+        "decorations": false,
+        "shadow": false,
+        "resizable": false,
+        "skipTaskbar": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; frame-src overquid-plugin: http://overquid-plugin.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.png"],
+    "resources": {
+      "../../../plugins/dev.overquid.clock/manifest.json": "plugins/dev.overquid.clock/manifest.json",
+      "../../../plugins/dev.overquid.clock/dist/": "plugins/dev.overquid.clock/dist/",
+      "../../../plugins/dev.overquid.discord/manifest.json": "plugins/dev.overquid.discord/manifest.json",
+      "../../../plugins/dev.overquid.browser/manifest.json": "plugins/dev.overquid.browser/manifest.json",
+      "../../../plugins/dev.overquid.youtube/manifest.json": "plugins/dev.overquid.youtube/manifest.json",
+      "resources/ubo-scriptlets.json": "ubo-scriptlets.json",
+      "../../../plugins/dev.overquid.notes/manifest.json": "plugins/dev.overquid.notes/manifest.json",
+      "../../../plugins/dev.overquid.notes/dist/": "plugins/dev.overquid.notes/dist/",
+      "../../../plugins/dev.overquid.todo/manifest.json": "plugins/dev.overquid.todo/manifest.json",
+      "../../../plugins/dev.overquid.todo/dist/": "plugins/dev.overquid.todo/dist/",
+      "../../../plugins/dev.overquid.pomodoro/manifest.json": "plugins/dev.overquid.pomodoro/manifest.json",
+      "../../../plugins/dev.overquid.pomodoro/dist/": "plugins/dev.overquid.pomodoro/dist/"
+    },
+    "targets": ["deb", "rpm"],
+    "category": "Utility",
+    "shortDescription": "A universal, plugin-driven desktop overlay",
+    "longDescription": "Overquid is an overlay toggled by a global hotkey, on top of any app: notes, to-do, Pomodoro, Discord, YouTube, a browser\u2026 every feature is a plugin built on a public SDK.",
+    "homepage": "https://github.com/Kureo524/Overquid",
+    "license": "MIT",
+    "linux": {
+      "deb": {
+        "depends": ["libgtk-layer-shell0", "gstreamer1.0-plugins-good", "gstreamer1.0-libav"]
+      },
+      "rpm": {
+        "depends": ["gtk-layer-shell", "gstreamer1-plugins-good"]
+      }
+    }
+  }
+}

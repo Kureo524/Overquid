@@ -1,0 +1,11 @@
+{
+  "id": "dev.overquid.isolation-check",
+  "name": "Isolation check",
+  "version": "0.1.0",
+  "entry": "index.html",
+  "network": ["api.github.com"],
+  "panel": {
+    "defaultSize": [360, 240]
+  },
+  "permissions": []
+}

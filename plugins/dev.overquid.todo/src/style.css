@@ -1,0 +1,95 @@
+/* "Encre" design direction: quiet ink, text first. */
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: #e6eaf2;
+  font:
+    13px/1.5 system-ui,
+    sans-serif;
+}
+input:not([type]) {
+  width: 100%;
+  box-sizing: border-box;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid rgba(230, 234, 242, 0.08);
+  border-radius: 10px;
+  background: rgba(230, 234, 242, 0.04);
+  color: inherit;
+  font: inherit;
+  outline: none;
+}
+input:not([type]):focus {
+  border-color: rgba(230, 234, 242, 0.15);
+}
+input::placeholder {
+  color: #868a98;
+}
+form {
+  margin: 0;
+}
+ul {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 4px;
+  border-radius: 8px;
+}
+li:hover {
+  background: rgba(230, 234, 242, 0.05);
+}
+label {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  cursor: pointer;
+}
+label span {
+  overflow-wrap: anywhere;
+}
+input[type='checkbox'] {
+  accent-color: #8fa4cc;
+}
+li.done span {
+  color: #868a98;
+  text-decoration: line-through;
+}
+button {
+  border: 0;
+  background: transparent;
+  color: #868a98;
+  font: inherit;
+  cursor: pointer;
+}
+button:hover {
+  color: #e6eaf2;
+}
+.remove {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  font-size: 16px;
+  line-height: 1;
+}
+footer {
+  display: flex;
+  justify-content: space-between;
+  color: #868a98;
+  font-size: 11px;
+}

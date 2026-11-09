@@ -8,7 +8,6 @@ A universal desktop overlay you summon with a hotkey, on top of anything: a game
 The core is a thin shell. Everything inside it is a plugin.
 
 > **Status: early development.** The repository foundations are in place; the app itself does not exist yet.
-> Follow the [roadmap](docs/PLAN.md#roadmap).
 
 ## Why
 
@@ -40,10 +39,41 @@ Save several layouts ("Work", "Game") and bind them to the app in the foreground
 }
 ```
 
+## Shipped plugins
+
+| Plugin   | What it is                                                                              |
+| -------- | --------------------------------------------------------------------------------------- |
+| Clock    | Time at a glance; stops ticking while hidden                                            |
+| Notes    | A scratchpad, saved as you type                                                         |
+| To-do    | Tasks to check off; clear the done ones in one click                                    |
+| Pomodoro | 25 min focus, 5 min breaks (15 after four); a notification at each change, even hidden  |
+| Discord  | The official Discord web app, in a panel (log in once, it stays connected while hidden) |
+| YouTube  | The official YouTube site, in a panel; videos pause when the panel is hidden            |
+| Browser  | Any site in a panel: address bar (address or DuckDuckGo search), back, forward, reload  |
+
+The browser and YouTube can be opened several times ("Add panel" offers "Browser 2"); instances share their browsing
+data (one login) and each has its own page.
+
+Discord and YouTube refuse to be embedded in a page, so they run as **web panels**: native WebKitGTK views placed by
+the core over their panel, with their own browsing data and no access to the app (Linux only for now). Links to other
+sites open in your browser.
+
+## Install
+
+Download the `.deb` (Debian, Ubuntu) or `.rpm` (Fedora, openSUSE) from the
+[latest release](https://github.com/Kureo524/Overquid/releases/latest) and install it with your package manager. Then
+bind `overquid toggle` to a hotkey (see [Try the overlay](#try-the-overlay)). On other distributions, build from source
+(see [Development](#development)).
+
 ## Platforms
 
-Linux first (X11, and Wayland through layer-shell on Hyprland, KDE, Sway, niri; GNOME is uncertain), Windows next.
-macOS is out of scope for now.
+Linux first, Windows next. macOS is out of scope for now.
+
+| Desktop                                    | Overlay                                 | Notes                                                                                                                                                                                                                                                                                         |
+| ------------------------------------------ | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Hyprland, KDE Plasma, Sway, niri (Wayland) | Layer-shell surface above everything    | Full support                                                                                                                                                                                                                                                                                  |
+| X11                                        | Always-on-top window                    | Bind `overquid toggle` in your window manager                                                                                                                                                                                                                                                 |
+| GNOME (Wayland)                            | Always-on-top window, below the top bar | No layer-shell, so it may not stay above a fullscreen game. Bind `overquid toggle` as a custom shortcut in Settings › Keyboard. When pinned panels are shown (after closing the overlay, or at startup), click the app underneath to type in it again; pinned panels cannot take the keyboard |
 
 ## Stack
 
@@ -52,12 +82,60 @@ all in a pnpm monorepo.
 
 ## Development
 
-Requires Node 20+ and pnpm 10.
+Requires Node 20+, pnpm 10, Rust (stable) and the
+[Tauri system dependencies](https://v2.tauri.app/start/prerequisites/#linux), plus `gtk-layer-shell` on Linux.
+Web panels (Discord, YouTube) also need the GStreamer plugins for sound and video: without `autoaudiosink`, WebKit
+crashes as soon as a page plays sound.
+
+```sh
+sudo pacman -S gst-plugins-good gst-libav               # Arch
+sudo dnf install gstreamer1-plugins-good gstreamer1-plugin-libav   # Fedora
+sudo apt install gstreamer1.0-plugins-good gstreamer1.0-libav       # Debian, Ubuntu
+```
 
 ```sh
 pnpm install
+pnpm build      # SDK, shipped plugins and UI; needed once before any cargo command
 pnpm lint && pnpm typecheck && pnpm test
+cargo clippy --workspace -- -D warnings && cargo test --workspace
 ```
+
+### Try the overlay
+
+```sh
+pnpm desktop build --no-bundle      # builds target/release/overquid
+./target/release/overquid &          # starts hidden, in the background
+./target/release/overquid toggle     # shows it; Escape or toggle again hides it
+```
+
+Bind `overquid toggle` to a hotkey in your desktop. On Hyprland (Lua config):
+
+```lua
+hl.bind("ALT + SHIFT + X", hl.dsp.exec_cmd("overquid toggle"))
+```
+
+The shield in the overlay bar blocks ads and trackers in web panels (off by default): Brave's engine
+([adblock-rust](https://github.com/brave/adblock-rust)) with the lists uBlock Origin uses by default, downloaded and
+refreshed daily. Its scriptlets (what removes YouTube's ads) are built from
+[uBlock Origin](https://github.com/gorhill/uBlock) (GPL-3.0) at build time and shipped as a separate data file; set
+`OVERQUID_SKIP_SCRIPTLETS=1` to build without them.
+
+On Hyprland, an overlay can follow the focused app: right-click its tab, "Use for <app>", and it comes forward whenever
+that app gets the focus (pinned panels included, even while the overlay is closed).
+
+Overlays (the tabs at the top of the overlay) can be switched from hotkeys too: `overquid next`, `overquid prev`,
+`overquid switch NAME`.
+
+### Write a plugin
+
+```sh
+node packages/create-overlay-plugin/index.js plugins/my-plugin --id com.example.my-plugin --name "My plugin"
+pnpm install && pnpm --filter com-example-my-plugin build
+```
+
+The generated folder has a manifest, a Vite + TypeScript setup and a working panel; its README explains how to install
+it. Once `create-overlay-plugin` and `@overquid/sdk` are on npm, `npm create overlay-plugin` will do the same outside
+this repository. The SDK's API and permissions: [packages/sdk/README.md](packages/sdk/README.md).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for branches, commit conventions and the PR flow.
 

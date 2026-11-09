@@ -1,6 +1,6 @@
 {
   "name": "@overquid/sdk",
-  "version": "0.0.0",
+  "version": "0.2.0",
   "description": "Public SDK for Overquid plugins.",
   "license": "MIT",
   "type": "module",
@@ -8,6 +8,7 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     }
@@ -19,5 +20,19 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kureo524/Overquid.git",
+    "directory": "packages/sdk"
+  },
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      }
+    }
   }
 }

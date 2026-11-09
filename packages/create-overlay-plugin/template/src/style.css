@@ -1,0 +1,16 @@
+body {
+  margin: 0;
+  color: #e6eaf2;
+  font:
+    13px/1.5 system-ui,
+    sans-serif;
+}
+.label {
+  margin: 0;
+  color: #868a98;
+}
+.count {
+  margin: 4px 0 0;
+  font-size: 28px;
+  font-weight: 600;
+}

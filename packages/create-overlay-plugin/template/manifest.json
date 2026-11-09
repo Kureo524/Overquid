@@ -1,0 +1,9 @@
+{
+  "id": "{{id}}",
+  "name": "{{name}}",
+  "version": "0.1.0",
+  "entry": "dist/index.html",
+  "panel": { "defaultSize": [280, 160] },
+  "permissions": ["storage"],
+  "network": []
+}
