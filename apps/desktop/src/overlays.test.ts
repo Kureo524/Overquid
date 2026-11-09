@@ -32,7 +32,7 @@ const two = {
 describe('parseOverlays', () => {
   it('reads what serializeOverlays writes', () => {
     const value = JSON.parse(JSON.stringify(serializeOverlays(two))) as unknown;
-    expect(parseOverlays(value)).toEqual({ overlays: two, fillWithInstalled: false });
+    expect(parseOverlays(value)).toEqual({ overlays: two, fill: null });
   });
 
   it('turns a one-layout file into the Main overlay, to be filled', () => {
@@ -42,14 +42,17 @@ describe('parseOverlays', () => {
         active: 'main',
         overlays: [{ id: 'main', name: 'Main', panels: { 'dev.overquid.clock': panel(5) } }],
       },
-      fillWithInstalled: true,
+      fill: 'installed',
     });
   });
 
-  it('starts with an empty Main overlay when nothing is saved', () => {
-    expect(parseOverlays(null).overlays.overlays).toEqual([
-      { id: 'main', name: 'Main', panels: {} },
-    ]);
+  it('starts a first run with an empty Main overlay, to fill with starter panels', () => {
+    for (const nothing of [null, {}, 'garbage']) {
+      expect(parseOverlays(nothing)).toEqual({
+        overlays: { active: 'main', overlays: [{ id: 'main', name: 'Main', panels: {} }] },
+        fill: 'starter',
+      });
+    }
   });
 
   it('drops broken and duplicate overlays, and an unknown active one', () => {
