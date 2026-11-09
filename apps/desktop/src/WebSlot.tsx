@@ -1,7 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
-import { useContext, useEffect, useLayoutEffect, useRef } from 'react';
-import type { Rect } from './overlay';
-import { PanelGeometry } from './Panel';
+import { useEffect, useLayoutEffect, useRef } from 'react';
+import { geometryChanged, holesAbove, layoutRect, onGeometryChange } from './geometry';
 
 interface WebSlotProps {
   pluginId: string;
@@ -11,56 +10,44 @@ interface WebSlotProps {
 }
 
 /**
- * Room for a web panel's native view (ADR 0004). The core draws the official
- * web app over this element: every render where its on-screen rectangle
- * changed (drag, resize, layout, visibility) sends the new one. The panel's
- * geometry is read so that this happens on every frame of a drag, not only
- * once the panel is dropped.
+ * Room for a web panel's native view (ADR 0004). The core draws the web page
+ * over this element, minus the parts covered by panels in front of it. Both
+ * are measured again whenever anything on screen moves.
  */
 export function WebSlot({ pluginId, name, visible }: WebSlotProps) {
   const ref = useRef<HTMLDivElement>(null);
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
   const sent = useRef<string | null>(null);
-  useContext(PanelGeometry);
 
-  useLayoutEffect(() => {
-    const element = ref.current;
-    const rect = visible && element ? layoutRect(element) : null;
-    const key = JSON.stringify(rect);
-    if (key === sent.current) return;
-    sent.current = key;
-    invoke('web_panel', { pluginId, rect }).catch((error: unknown) =>
-      console.error(`Web panel ${pluginId}:`, error),
-    );
-  });
+  useEffect(() => {
+    const place = () => {
+      const element = ref.current;
+      const shown = visibleRef.current && element !== null;
+      const rect = shown ? layoutRect(element) : null;
+      const holes = shown ? holesAbove(element) : [];
+      const key = JSON.stringify([rect, holes]);
+      if (key === sent.current) return;
+      sent.current = key;
+      invoke('web_panel', { pluginId, rect, holes }).catch((error: unknown) =>
+        console.error(`Web panel ${pluginId}:`, error),
+      );
+    };
+    place();
+    const stop = onGeometryChange(place);
+    return () => {
+      stop();
+      sent.current = null;
+      void invoke('web_panel', { pluginId, rect: null, holes: [] });
+    };
+  }, [pluginId]);
 
-  useEffect(
-    () => () => {
-      void invoke('web_panel', { pluginId, rect: null });
-    },
-    [pluginId],
-  );
+  // Own changes (visibility) count as a move too.
+  useLayoutEffect(() => geometryChanged());
 
   return (
     <div ref={ref} className="web-slot mono">
       Loading {name}…
     </div>
   );
-}
-
-/**
- * The element's rectangle in the page, ignoring CSS transforms: the overlay
- * zooms in when summoned, and `getBoundingClientRect` would catch the first
- * frame of that animation, leaving the native view slightly off for good.
- */
-function layoutRect(element: HTMLElement): Rect {
-  let x = 0;
-  let y = 0;
-  for (let node: Element | null = element; node instanceof HTMLElement; node = node.offsetParent) {
-    x += node.offsetLeft + node.clientLeft;
-    y += node.offsetTop + node.clientTop;
-  }
-  // The element's own border is outside the area the view covers.
-  x -= element.clientLeft;
-  y -= element.clientTop;
-  return { x, y, width: element.offsetWidth, height: element.offsetHeight };
 }
