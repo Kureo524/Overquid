@@ -118,6 +118,17 @@ that app gets the focus (pinned panels included, even while the overlay is close
 Overlays (the tabs at the top of the overlay) can be switched from hotkeys too: `overquid next`, `overquid prev`,
 `overquid switch NAME`.
 
+### Write a plugin
+
+```sh
+node packages/create-overlay-plugin/index.js plugins/my-plugin --id com.example.my-plugin --name "My plugin"
+pnpm install && pnpm --filter com-example-my-plugin build
+```
+
+The generated folder has a manifest, a Vite + TypeScript setup and a working panel; its README explains how to install
+it. Once `create-overlay-plugin` and `@overquid/sdk` are on npm, `npm create overlay-plugin` will do the same outside
+this repository. The SDK's API and permissions: [packages/sdk/README.md](packages/sdk/README.md).
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for branches, commit conventions and the PR flow.
 
 ## License

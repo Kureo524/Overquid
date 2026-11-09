@@ -85,6 +85,12 @@ importers:
         specifier: ^5.1.0
         version: 5.1.0(@types/node@26.6.6)(vite@8.3.6(@types/node@26.6.6)(jiti@2.7.0))
 
+  packages/create-overlay-plugin:
+    devDependencies:
+      vitest:
+        specifier: ^5.1.0
+        version: 5.1.0(@types/node@26.6.6)(vite@8.3.6(@types/node@26.6.6)(jiti@2.7.0))
+
   packages/sdk: {}
 
   plugins/dev.overquid.clock:
