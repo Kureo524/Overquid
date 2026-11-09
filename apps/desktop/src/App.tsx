@@ -19,11 +19,14 @@ import {
   removePanel,
   renameOverlay,
   saveOverlays,
+  overlayForApp,
   switchByName,
+  toggleApp,
   updatePanel,
   type Overlays,
 } from './overlays';
 import { OverlayBar } from './OverlayBar';
+import { useActiveApp } from './activeApp';
 import { instanceOf, nextPanelId, panelIdsIn, panelTitle, pluginOf } from './instances';
 import {
   regionsOf,
@@ -220,6 +223,20 @@ export function App() {
     else changeOverlays(switchByName(overlays, request.name));
   });
 
+  // An app bound to an overlay brings it forward when it gets the focus, even
+  // while the overlay is closed (its pinned panels follow).
+  const activeApp = useActiveApp();
+  const followApp = useRef<(app: string) => void>(() => undefined);
+  followApp.current = (app) => {
+    const target = overlays && overlayForApp(overlays, app);
+    if (overlays && target && target.id !== overlays.active) {
+      changeOverlays({ ...overlays, active: target.id });
+    }
+  };
+  useEffect(() => {
+    if (activeApp) followApp.current(activeApp);
+  }, [activeApp]);
+
   const inOverlay = (id: PanelId) => layout !== null && id in layout;
   const panel = (id: PanelId) => layout?.[id] ?? defaults(id);
   const summoned = visibility === 'summoned';
@@ -326,6 +343,8 @@ export function App() {
           onCreate={() => changeOverlays(createOverlay(overlays))}
           onRename={(id, name) => commit(renameOverlay(overlays, id, name))}
           onDelete={(id) => changeOverlays(deleteOverlay(overlays, id))}
+          activeApp={activeApp}
+          onToggleApp={(id, app) => commit(toggleApp(overlays, id, app))}
           onAddPanel={(id) => {
             // In front of the panels already there.
             const z =

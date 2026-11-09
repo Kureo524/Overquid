@@ -10,6 +10,8 @@ export interface Overlay {
   name: string;
   /** The panels of this overlay, by panel id: a panel is in it if it has an entry. */
   panels: Layout;
+  /** Window classes of the apps that bring this overlay forward when they get the focus. */
+  apps?: string[];
 }
 
 export interface Overlays {
@@ -43,7 +45,12 @@ export function parseOverlays(value: unknown): Loaded {
       if (!entry.id || ids.has(entry.id)) continue;
       ids.add(entry.id);
       const panels = parseLayout({ version: 1, panels: entry.panels });
-      overlays.push({ id: entry.id, name: entry.name.trim() || 'Overlay', panels });
+      const overlay: Overlay = { id: entry.id, name: entry.name.trim() || 'Overlay', panels };
+      const apps = Array.isArray(entry.apps)
+        ? entry.apps.filter((app): app is string => typeof app === 'string' && app.trim() !== '')
+        : [];
+      if (apps.length > 0) overlay.apps = apps;
+      overlays.push(overlay);
     }
     if (overlays.length > 0) {
       const first = overlays[0] as Overlay;
@@ -158,4 +165,31 @@ export function deleteOverlay(state: Overlays, id: string): Overlays {
   const overlays = state.overlays.filter((overlay) => overlay.id !== id);
   const neighbour = overlays[Math.min(index, overlays.length - 1)] as Overlay;
   return { active: state.active === id ? neighbour.id : state.active, overlays };
+}
+
+const sameApp = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+
+/** The overlay bound to the app with window class `app`, if any. */
+export function overlayForApp(state: Overlays, app: string): Overlay | undefined {
+  return state.overlays.find((overlay) => overlay.apps?.some((known) => sameApp(known, app)));
+}
+
+/**
+ * Binds `app` to overlay `id`, or unbinds it if it already was. An app brings
+ * one overlay forward: binding it moves it from any other overlay.
+ */
+export function toggleApp(state: Overlays, id: string, app: string): Overlays {
+  const bound = state.overlays
+    .find((overlay) => overlay.id === id)
+    ?.apps?.some((known) => sameApp(known, app));
+  return {
+    ...state,
+    overlays: state.overlays.map((overlay) => {
+      const others = (overlay.apps ?? []).filter((known) => !sameApp(known, app));
+      const apps = overlay.id === id && !bound ? [...others, app] : others;
+      const next: Overlay = { id: overlay.id, name: overlay.name, panels: overlay.panels };
+      if (apps.length > 0) next.apps = apps;
+      return next;
+    }),
+  };
 }

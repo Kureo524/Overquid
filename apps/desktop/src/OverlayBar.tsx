@@ -1,6 +1,7 @@
 import { useLayoutEffect, useState, type KeyboardEvent } from 'react';
 import { geometryChanged } from './geometry';
 import { describeFilter, filterEnabled, setContentFilter, useContentFilter } from './contentFilter';
+import { appLabel } from './activeApp';
 import { Menu, type MenuItem } from './Menu';
 import type { Overlay } from './overlays';
 
@@ -17,6 +18,10 @@ interface OverlayBarProps {
   onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
   onAddPanel: (id: string) => void;
+  /** Window class of the app under the overlay, if the desktop reports it. */
+  activeApp: string | null;
+  /** Binds an app to an overlay, or unbinds it. */
+  onToggleApp: (id: string, app: string) => void;
 }
 
 /** Tabs to switch between overlays, create, rename or delete them, and add panels (ADR 0006). */
@@ -29,6 +34,8 @@ export function OverlayBar({
   onRename,
   onDelete,
   onAddPanel,
+  activeApp,
+  onToggleApp,
 }: OverlayBarProps) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [menu, setMenu] = useState<{
@@ -47,10 +54,25 @@ export function OverlayBar({
     setRenaming(null);
   };
 
-  const overlayItems = (id: string): MenuItem[] => [
-    { label: 'Rename', onPick: () => setRenaming(id) },
-    { label: 'Delete', disabled: overlays.length <= 1, onPick: () => onDelete(id) },
-  ];
+  const overlayItems = (id: string): MenuItem[] => {
+    const bound = overlays.find((overlay) => overlay.id === id)?.apps ?? [];
+    // The app under the overlay first, then the other apps already bound.
+    const apps = [
+      ...(activeApp && !bound.some((app) => app.toLowerCase() === activeApp.toLowerCase())
+        ? [activeApp]
+        : []),
+      ...bound,
+    ];
+    return [
+      ...apps.map((app) => ({
+        label: `Use for ${appLabel(app)}`,
+        checked: bound.includes(app),
+        onPick: () => onToggleApp(id, app),
+      })),
+      { label: 'Rename', onPick: () => setRenaming(id) },
+      { label: 'Delete', disabled: overlays.length <= 1, onPick: () => onDelete(id) },
+    ];
+  };
 
   return (
     <nav
