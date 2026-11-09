@@ -58,6 +58,13 @@ Discord and YouTube refuse to be embedded in a page, so they run as **web panels
 the core over their panel, with their own browsing data and no access to the app (Linux only for now). Links to other
 sites open in your browser.
 
+## Install
+
+Download the `.deb` (Debian, Ubuntu) or `.rpm` (Fedora, openSUSE) from the
+[latest release](https://github.com/Kureo524/Overquid/releases/latest) and install it with your package manager. Then
+bind `overquid toggle` to a hotkey (see [Try the overlay](#try-the-overlay)). On other distributions, build from source
+(see [Development](#development)).
+
 ## Platforms
 
 Linux first, Windows next. macOS is out of scope for now.

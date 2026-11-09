@@ -1,0 +1,34 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bump-minor-pre-major": true,
+  "include-v-in-tag": true,
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "package-name": "overquid",
+      "component": "overquid",
+      "include-component-in-tag": false,
+      "changelog-path": "CHANGELOG.md",
+      "exclude-paths": ["packages/sdk", "packages/create-overlay-plugin"],
+      "extra-files": [
+        {
+          "type": "json",
+          "path": "apps/desktop/src-tauri/tauri.conf.json",
+          "jsonpath": "$.version"
+        },
+        { "type": "json", "path": "apps/desktop/package.json", "jsonpath": "$.version" }
+      ]
+    },
+    "packages/sdk": {
+      "release-type": "node",
+      "package-name": "@overquid/sdk",
+      "component": "sdk",
+      "extra-files": [{ "type": "generic", "path": "src/index.ts" }]
+    },
+    "packages/create-overlay-plugin": {
+      "release-type": "node",
+      "package-name": "create-overlay-plugin",
+      "component": "create-overlay-plugin"
+    }
+  }
+}
