@@ -2,3 +2,7 @@ dist
 coverage
 target
 pnpm-lock.yaml
+# Written by release-please, in its own format.
+CHANGELOG.md
+.release-please-manifest.json
+apps/desktop/src-tauri/tauri.conf.json

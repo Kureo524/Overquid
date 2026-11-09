@@ -26,6 +26,9 @@ jobs:
       - uses: googleapis/release-please-action@v4
         id: release
         with:
+          # A personal token: pull requests opened with the default
+          # GITHUB_TOKEN do not trigger CI, and main requires its checks.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           target-branch: main
