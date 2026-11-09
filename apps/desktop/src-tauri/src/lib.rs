@@ -68,12 +68,14 @@ fn plugin_call<R: Runtime>(
 }
 
 /// Places a web plugin's native view over `rect` (CSS pixels in the overlay
-/// window), or hides it when `rect` is `None` (ADR 0004).
+/// window), minus the `holes` covered by panels in front of it, or hides it
+/// when `rect` is `None` (ADR 0004).
 #[tauri::command(async)]
 fn web_panel<R: Runtime>(
     app: tauri::AppHandle<R>,
     plugin_id: String,
     rect: Option<Rect>,
+    holes: Vec<web_panels::Hole>,
 ) -> Result<(), String> {
     let (_, manifest) = plugins::find(&plugin_roots(&app), &plugin_id)
         .ok_or_else(|| format!("unknown plugin '{plugin_id}'"))?;
@@ -93,10 +95,19 @@ fn web_panel<R: Runtime>(
             data: base.join("data"),
             cache: base.join("cache"),
         };
-        let on_change = move |page: web_panels::PageState| {
-            let _ = events.emit(WEB_PAGE_EVENT, page);
+        let pressed = events.clone();
+        let id = plugin_id.clone();
+        let hooks = web_panels::Hooks {
+            on_change: Box::new(move |page| {
+                let _ = events.emit(WEB_PAGE_EVENT, page);
+            }),
+            on_press: Box::new(move || {
+                let _ = pressed.emit(WEB_PANEL_PRESSED_EVENT, &id);
+            }),
         };
-        let _ = tx.send(web_panels::place(&plugin_id, &spec, dirs, rect, on_change));
+        let _ = tx.send(web_panels::place(
+            &plugin_id, &spec, dirs, rect, &holes, hooks,
+        ));
     })
     .map_err(|error| error.to_string())?;
     rx.recv().map_err(|error| error.to_string())?
@@ -104,6 +115,8 @@ fn web_panel<R: Runtime>(
 
 /// Sent with a `web_panels::PageState` whenever a web panel's page changes.
 const WEB_PAGE_EVENT: &str = "web-page";
+/// Sent with the plugin id when the user clicks in a web panel's page.
+const WEB_PANEL_PRESSED_EVENT: &str = "web-panel-pressed";
 
 /// Runs a browser button or address bar entry (ADR 0004).
 #[tauri::command(async)]

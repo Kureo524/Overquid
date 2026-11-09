@@ -2,8 +2,17 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
-const { clampSize, migrateLayout, parseLayout, serializeLayout, toPlacement, toPosition } =
-  await import('./layout');
+const {
+  clampSize,
+  isInFront,
+  layerOf,
+  migrateLayout,
+  restack,
+  parseLayout,
+  serializeLayout,
+  toPlacement,
+  toPosition,
+} = await import('./layout');
 
 const laptop = { width: 1920, height: 1080 };
 const wide = { width: 2560, height: 1600 };
@@ -123,5 +132,34 @@ describe('migrateLayout', () => {
     expect(migrateLayout({ clock: saved, 'dev.overquid.clock': plugin })).toEqual({
       'dev.overquid.clock': plugin,
     });
+  });
+});
+
+describe('stacking', () => {
+  const at = (z?: number, onTop?: boolean) => ({
+    placement: { h: 'left', v: 'top', dx: 0, dy: 0 } as const,
+    pinned: false,
+    ...(z === undefined ? {} : { z }),
+    ...(onTop ? { onTop } : {}),
+  });
+
+  it('brings a panel in front of, or behind, the others', () => {
+    const layout = { a: at(), b: at(3), c: at(-2) };
+    expect(restack(layout, 'a', 'front')).toBe(4);
+    expect(restack(layout, 'a', 'back')).toBe(-3);
+    expect(isInFront(layout, 'b')).toBe(true);
+    expect(isInFront(layout, 'a')).toBe(false);
+  });
+
+  it('keeps panels on top above the others, ordered among themselves', () => {
+    const layout = { a: at(50), top: at(0, true), top2: at(1, true) };
+    expect(layerOf(layout.top)).toBeGreaterThan(layerOf(layout.a));
+    expect(restack(layout, 'top', 'front')).toBe(2);
+    expect(isInFront(layout, 'a')).toBe(true);
+  });
+
+  it('reads the stacking back from a saved layout', () => {
+    const value = { version: 1, panels: { a: { ...at(7, true) }, b: { ...at(), z: 'x' } } };
+    expect(parseLayout(value)).toEqual({ a: at(7, true), b: at() });
   });
 });

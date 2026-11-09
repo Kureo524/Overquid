@@ -29,6 +29,10 @@ export interface PanelLayout {
   pinned: boolean;
   /** Panel width and content height, once the user resized the panel. */
   size?: Size;
+  /** Place in the stack: higher is in front. Panels never raised are at 0. */
+  z?: number;
+  /** Kept in front of every other panel. */
+  onTop?: boolean;
 }
 
 export type Layout = Record<string, PanelLayout>;
@@ -94,6 +98,8 @@ function parsePanel(value: unknown): PanelLayout | null {
   };
   const size = parseSize(value.size);
   if (size) panel.size = size;
+  if (typeof value.z === 'number' && Number.isFinite(value.z)) panel.z = Math.round(value.z);
+  if (value.onTop === true) panel.onTop = true;
   return panel;
 }
 
@@ -153,3 +159,29 @@ export const loadLayout = async (): Promise<Layout> =>
 
 export const saveLayout = (layout: Layout) =>
   invoke('save_layout', { layout: serializeLayout(layout) });
+
+/** Panels kept on top stay above this offset, in their own order. */
+const ON_TOP = 1_000_000;
+
+/** Stacking value of a panel: what the DOM `z-index` and the clipping of web panels use. */
+export const layerOf = (panel: PanelLayout): number => (panel.z ?? 0) + (panel.onTop ? ON_TOP : 0);
+
+/** The `z` that puts `id` in front of (or behind) every other panel of its kind. */
+export function restack(layout: Layout, id: string, to: 'front' | 'back'): number {
+  const own = layout[id];
+  const others = Object.entries(layout)
+    .filter(([other, panel]) => other !== id && Boolean(panel.onTop) === Boolean(own?.onTop))
+    .map(([, panel]) => panel.z ?? 0);
+  if (others.length === 0) return own?.z ?? 0;
+  return to === 'front' ? Math.max(...others) + 1 : Math.min(...others) - 1;
+}
+
+/** Whether `id` is already in front of every other panel of its kind. */
+export function isInFront(layout: Layout, id: string): boolean {
+  const own = layout[id];
+  const z = own?.z ?? 0;
+  return Object.entries(layout).every(
+    ([other, panel]) =>
+      other === id || Boolean(panel.onTop) !== Boolean(own?.onTop) || (panel.z ?? 0) < z,
+  );
+}

@@ -1,6 +1,10 @@
+import { listen } from '@tauri-apps/api/event';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
+  isInFront,
+  layerOf,
   loadLayout,
+  restack,
   saveLayout,
   type Layout,
   type PanelLayout,
@@ -17,7 +21,7 @@ import {
   type Rect,
 } from './overlay';
 import { Browser } from './Browser';
-import { Panel } from './Panel';
+import { Panel, type LayerAction } from './Panel';
 import { PluginFrame } from './PluginFrame';
 import { WebSlot } from './WebSlot';
 import { listPlugins, startBroker, type PluginManifest } from './plugins';
@@ -75,6 +79,14 @@ function usePlugins(): PluginManifest[] | null {
     });
   }, []);
   return plugins;
+}
+
+/** Presses inside a web panel's native view, which the page never sees. */
+function useWebPanelPresses(onPress: (pluginId: string) => void) {
+  useEffect(() => {
+    const stop = listen<string>('web-panel-pressed', (event) => onPress(event.payload));
+    return () => void stop.then((unlisten) => unlisten());
+  }, [onPress]);
 }
 
 /** Window size. The window is created hidden, at a temporary size, so
@@ -167,13 +179,39 @@ export function App() {
 
   // A pinned panel gives the keyboard back as soon as the pointer leaves it.
   const onLeave = summoned ? undefined : () => void releaseKeyboard();
+  // The full layout, defaults included: stacking compares every panel.
+  const stack = (): Layout =>
+    Object.fromEntries(
+      ['welcome', ...plugins.map((plugin) => plugin.id)].map((id) => [id, panel(id)]),
+    );
+  const raise = (id: PanelId) => {
+    const all = stack();
+    if (!isInFront(all, id)) updateLayout(id, { z: restack(all, id, 'front') });
+  };
+  const raiseRef = useRef(raise);
+  raiseRef.current = raise;
+  useWebPanelPresses((id) => raiseRef.current(id));
+
   const panelProps = (id: PanelId) => ({
     placement: panel(id).placement,
     pinned: panel(id).pinned,
     viewport,
+    layer: layerOf(panel(id)),
+    onTop: panel(id).onTop === true,
     onPlace: (placement: PanelLayout['placement']) => updateLayout(id, { placement }),
     onTogglePin: () => updateLayout(id, { pinned: !panel(id).pinned }),
     onPointerLeave: onLeave,
+    onRaise: () => raise(id),
+    onLayer: (action: LayerAction) => {
+      if (action === 'toggle-on-top') {
+        const onTop = panel(id).onTop !== true;
+        // Joins the top of its new group.
+        const all = { ...stack(), [id]: { ...panel(id), onTop } };
+        updateLayout(id, { onTop, z: restack(all, id, 'front') });
+      } else {
+        updateLayout(id, { z: restack(stack(), id, action) });
+      }
+    },
   });
 
   return (

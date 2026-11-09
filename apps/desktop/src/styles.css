@@ -257,3 +257,36 @@ kbd {
   flex: 1;
   min-height: 0;
 }
+
+.menu {
+  position: absolute;
+  min-width: 170px;
+  padding: 4px;
+  border-radius: 12px;
+}
+
+.menu__item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px 6px 6px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu__item:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.menu__check {
+  width: 14px;
+  color: var(--accent);
+  text-align: center;
+}

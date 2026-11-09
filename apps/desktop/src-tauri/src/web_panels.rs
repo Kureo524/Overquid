@@ -30,6 +30,61 @@ pub struct PageState {
     pub loading: bool,
 }
 
+/// A panel in front of a web panel, in CSS pixels of the overlay window: the
+/// part of the web page to cut out (ADR 0004).
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct Hole {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    /// Corner radius of the panel: its rounded corners leave the page visible.
+    #[serde(default)]
+    pub radius: f64,
+}
+
+/// Height of the bands that approximate a rounded corner.
+const CORNER_STEP: i32 = 2;
+
+/// A rounded rectangle as a few plain rectangles `(x, y, width, height)`: one
+/// band per `CORNER_STEP` rows in the corners, one for the straight middle.
+/// Each corner band is as wide as the curve at its middle row.
+pub fn rounded_rectangles(
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    radius: f64,
+) -> Vec<(i32, i32, i32, i32)> {
+    let radius = radius.max(0.0).min(f64::from(width.min(height)) / 2.0);
+    let r = radius.floor() as i32;
+    if r < CORNER_STEP {
+        return vec![(x, y, width, height)];
+    }
+    let mut parts = Vec::new();
+    let mut row = 0;
+    while row < r {
+        let band = CORNER_STEP.min(r - row);
+        // Distance from the corner circle's centre to the band's middle row.
+        let dy = radius - (f64::from(row) + f64::from(band) / 2.0);
+        let inset = (radius - (radius * radius - dy * dy).max(0.0).sqrt()).round() as i32;
+        let w = width - 2 * inset;
+        parts.push((x + inset, y + row, w, band));
+        parts.push((x + inset, y + height - row - band, w, band));
+        row += band;
+    }
+    parts.push((x, y + r, width, height - 2 * r));
+    parts
+}
+
+/// What a web panel reports to the overlay.
+pub struct Hooks {
+    /// The page changed (address, title, history, loading).
+    pub on_change: Box<dyn Fn(PageState)>,
+    /// The user pressed a mouse button in the view: its panel comes to the front.
+    pub on_press: Box<dyn Fn()>,
+}
+
 /// A browser button or address bar entry.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -62,7 +117,8 @@ pub fn place(
     _spec: &crate::plugins::WebSpec,
     _dirs: DataDirs,
     _rect: Option<crate::state::Rect>,
-    _on_change: impl Fn(PageState) + 'static,
+    _holes: &[Hole],
+    _hooks: Hooks,
 ) -> Result<(), String> {
     Err("web panels are only supported on Linux for now".into())
 }
@@ -92,7 +148,7 @@ mod linux {
         WebsiteDataManagerExt,
     };
 
-    use super::{DataDirs, Navigation, PAUSE_MEDIA, PageState};
+    use super::{DataDirs, Hole, Hooks, Navigation, PAUSE_MEDIA, PageState, rounded_rectangles};
     use crate::plugins::{WebSpec, host_allowed, https_host, resolve_input};
     use crate::state::Rect;
 
@@ -104,10 +160,18 @@ mod linux {
     // GTK objects live on the main thread only; so does this state.
     thread_local! {
         static STATE: RefCell<Option<State>> = const { RefCell::new(None) };
-        /// Exact rectangle of each view in the overlay. Kept apart from
+        /// Exact rectangle of each view in the overlay, and the parts of it
+        /// covered by panels in front (view coordinates). Kept apart from
         /// `STATE`: GTK reads it while laying out, possibly during `place`.
-        static RECTS: RefCell<Vec<(gtk::Widget, gtk::gdk::Rectangle)>> =
-            const { RefCell::new(Vec::new()) };
+        static RECTS: RefCell<Vec<Placed>> = const { RefCell::new(Vec::new()) };
+        /// Set while a covered view draws its visible parts one by one.
+        static NESTED_DRAW: Cell<bool> = const { Cell::new(false) };
+    }
+
+    struct Placed {
+        view: gtk::Widget,
+        rect: gtk::gdk::Rectangle,
+        holes: Vec<gtk::cairo::RectangleInt>,
     }
 
     /// Slips a `gtk::Overlay` between the window and its content (Tao's box
@@ -125,8 +189,8 @@ mod linux {
                 rects
                     .borrow()
                     .iter()
-                    .find(|(view, _)| view == widget)
-                    .map(|(_, rect)| *rect)
+                    .find(|placed| placed.view == *widget)
+                    .map(|placed| placed.rect)
             })
         });
         window.remove(&content);
@@ -148,7 +212,8 @@ mod linux {
         spec: &WebSpec,
         dirs: DataDirs,
         rect: Option<Rect>,
-        on_change: impl Fn(PageState) + 'static,
+        holes: &[Hole],
+        hooks: Hooks,
     ) -> Result<(), String> {
         STATE.with(|state| {
             let mut state = state.borrow_mut();
@@ -172,24 +237,85 @@ mod linux {
             };
             let view = state.views.entry(id.to_owned()).or_insert_with(|| {
                 let view = create(spec, &dirs);
-                watch(&view, id, on_change);
+                watch(&view, id, hooks);
                 view.load_uri(&spec.url);
                 state.overlay.add_overlay(&view);
                 view
             });
             let (x, y, width, height) = rect;
-            let rect = gtk::gdk::Rectangle::new(x, y, width, height);
-            let widget = view.clone().upcast::<gtk::Widget>();
+            let holes = holes
+                .iter()
+                .filter_map(|hole| {
+                    let area = Rect {
+                        x: hole.x,
+                        y: hole.y,
+                        width: hole.width,
+                        height: hole.height,
+                    };
+                    Some((area.to_pixels()?, hole.radius))
+                })
+                .flat_map(|((hx, hy, hw, hh), radius)| {
+                    rounded_rectangles(hx - x, hy - y, hw, hh, radius)
+                })
+                .map(|(hx, hy, hw, hh)| gtk::cairo::RectangleInt::new(hx, hy, hw, hh))
+                .collect();
+            let placed = Placed {
+                view: view.clone().upcast(),
+                rect: gtk::gdk::Rectangle::new(x, y, width, height),
+                holes,
+            };
             RECTS.with(|rects| {
                 let mut rects = rects.borrow_mut();
-                match rects.iter_mut().find(|(known, _)| *known == widget) {
-                    Some(entry) => entry.1 = rect,
-                    None => rects.push((widget, rect)),
+                match rects.iter_mut().find(|known| known.view == placed.view) {
+                    Some(entry) => *entry = placed,
+                    None => rects.push(placed),
                 }
             });
             view.show();
             view.queue_resize();
+            cut(view.upcast_ref());
             Ok(())
+        })
+    }
+
+    /// Cuts the panels in front out of the view for clicks: they reach the
+    /// overlay page under it. (Drawing is cut in the view's draw handler.)
+    /// Native views are drawn over the whole overlay page: without this, a
+    /// panel in front of a web panel would show behind its page.
+    fn cut(view: &gtk::Widget) {
+        let region = visible_region(view).or_else(|| {
+            RECTS.with(|rects| {
+                let rects = rects.borrow();
+                let placed = rects.iter().find(|placed| placed.view == *view)?;
+                Some(gtk::cairo::Region::create_rectangle(
+                    &gtk::cairo::RectangleInt::new(0, 0, placed.rect.width(), placed.rect.height()),
+                ))
+            })
+        });
+        let Some(region) = region else { return };
+        // Both the view's window and the one `gtk::Overlay` holds it in.
+        for window in [view.window(), view.parent_window()].into_iter().flatten() {
+            window.input_shape_combine_region(&region, 0, 0);
+        }
+        view.queue_draw();
+    }
+
+    /// The part of the view not covered by panels in front, or `None` when
+    /// nothing covers it.
+    fn visible_region(view: &gtk::Widget) -> Option<gtk::cairo::Region> {
+        RECTS.with(|rects| {
+            let rects = rects.borrow();
+            let placed = rects.iter().find(|placed| placed.view == *view)?;
+            if placed.holes.is_empty() {
+                return None;
+            }
+            let full =
+                gtk::cairo::RectangleInt::new(0, 0, placed.rect.width(), placed.rect.height());
+            let region = gtk::cairo::Region::create_rectangle(&full);
+            for hole in &placed.holes {
+                let _ = region.subtract_rectangle(hole);
+            }
+            Some(region)
         })
     }
 
@@ -217,7 +343,45 @@ mod linux {
     }
 
     /// Reports the page's address, title, history and loading state on every change.
-    fn watch(view: &WebView, id: &str, on_change: impl Fn(PageState) + 'static) {
+    fn watch(view: &WebView, id: &str, hooks: Hooks) {
+        let Hooks {
+            on_change,
+            on_press,
+        } = hooks;
+        view.connect_button_press_event(move |_, _| {
+            on_press();
+            glib::Propagation::Proceed
+        });
+        // The view's windows exist once it is allocated.
+        view.connect_size_allocate(|view, _| cut(view.upcast_ref()));
+        // Drawing: WebKit copies its frame clipped to the bounding box of the
+        // clip only, and GDK window shapes do not apply to it. When panels
+        // cover the view, its visible part is split into rectangles and
+        // WebKit draws once per rectangle, each its own clip.
+        view.connect_draw(|view, cr| {
+            if NESTED_DRAW.get() {
+                return glib::Propagation::Proceed;
+            }
+            let Some(visible) = visible_region(view.upcast_ref()) else {
+                return glib::Propagation::Proceed;
+            };
+            NESTED_DRAW.set(true);
+            for index in 0..visible.num_rectangles() {
+                let part = visible.rectangle(index);
+                let _ = cr.save();
+                cr.rectangle(
+                    f64::from(part.x()),
+                    f64::from(part.y()),
+                    f64::from(part.width()),
+                    f64::from(part.height()),
+                );
+                cr.clip();
+                view.draw(cr);
+                let _ = cr.restore();
+            }
+            NESTED_DRAW.set(false);
+            glib::Propagation::Stop
+        });
         let id = id.to_owned();
         let report = Rc::new(move |view: &WebView| {
             on_change(PageState {
@@ -380,5 +544,46 @@ mod linux {
         {
             eprintln!("overquid: cannot open {uri}: {error}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rounded_rectangles;
+
+    fn covers(parts: &[(i32, i32, i32, i32)], px: i32, py: i32) -> bool {
+        parts
+            .iter()
+            .any(|&(x, y, w, h)| px >= x && px < x + w && py >= y && py < y + h)
+    }
+
+    #[test]
+    fn square_corners_stay_one_rectangle() {
+        assert_eq!(rounded_rectangles(5, 6, 100, 50, 0.0), [(5, 6, 100, 50)]);
+        assert_eq!(rounded_rectangles(5, 6, 100, 50, 1.0), [(5, 6, 100, 50)]);
+    }
+
+    #[test]
+    fn rounded_corners_leave_the_corner_out() {
+        let parts = rounded_rectangles(0, 0, 200, 100, 18.0);
+        // Centre and edge midpoints are covered, the very corners are not.
+        assert!(covers(&parts, 100, 50));
+        assert!(covers(&parts, 100, 0));
+        assert!(covers(&parts, 0, 50));
+        assert!(covers(&parts, 199, 99 - 18));
+        for (x, y) in [(0, 0), (199, 0), (0, 99), (199, 99)] {
+            assert!(!covers(&parts, x, y), "corner {x},{y}");
+        }
+        // Bands never overlap the middle and stay inside the rectangle.
+        for &(x, y, w, h) in &parts {
+            assert!(x >= 0 && y >= 0 && x + w <= 200 && y + h <= 100 && w > 0 && h > 0);
+        }
+    }
+
+    #[test]
+    fn radius_is_capped_by_the_smaller_side() {
+        let parts = rounded_rectangles(0, 0, 40, 10, 99.0);
+        assert!(covers(&parts, 20, 5));
+        assert!(!covers(&parts, 0, 0));
     }
 }

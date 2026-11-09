@@ -1,11 +1,13 @@
 import {
-  createContext,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
   type PointerEvent,
   type ReactNode,
 } from 'react';
+import { createPortal } from 'react-dom';
+import { geometryChanged } from './geometry';
 import {
   clampSize,
   toPlacement,
@@ -15,13 +17,11 @@ import {
   type Size,
 } from './layout';
 
-/**
- * Where a panel currently is on screen, updated on every frame of a drag or a
- * resize. Content that must follow the panel outside the DOM (a web panel's
- * native view) reads it, so it re-renders even though its own props did not
- * change.
- */
-export const PanelGeometry = createContext<Position & Size>({ x: 0, y: 0, width: 0, height: 0 });
+/** A layer menu entry. */
+export type LayerAction = 'front' | 'back' | 'toggle-on-top';
+
+/** Stacking value of open menus: in front of every panel. */
+const MENU_LAYER = 2_000_000;
 
 interface PanelProps {
   title: string;
@@ -44,6 +44,12 @@ interface PanelProps {
   onPointerLeave?: (() => void) | undefined;
   /** Kept in the page but not shown (plugin panels stay loaded while hidden). */
   hidden?: boolean;
+  /** Place in the stack (`layerOf`): higher is in front. */
+  layer: number;
+  onTop: boolean;
+  /** Called on any press in the panel: it comes to the front. */
+  onRaise: () => void;
+  onLayer: (action: LayerAction) => void;
   children: ReactNode;
 }
 
@@ -69,6 +75,10 @@ export function Panel({
   onTogglePin,
   onPointerLeave,
   hidden = false,
+  layer,
+  onTop,
+  onRaise,
+  onLayer,
   children,
 }: PanelProps) {
   const ref = useRef<HTMLElement>(null);
@@ -78,6 +88,10 @@ export function Panel({
   // only updated (and saved) once the gesture ends.
   const [live, setLive] = useState<{ position: Position; content?: Size } | null>(null);
   const gesture = useRef<Gesture | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+
+  // Web panels cut out what is in front of them: tell them on every change.
+  useLayoutEffect(() => geometryChanged());
 
   useLayoutEffect(() => {
     const element = ref.current;
@@ -174,10 +188,14 @@ export function Panel({
         width: panelWidth,
         left: position.x,
         top: position.y,
+        zIndex: layer,
         visibility: hidden ? 'hidden' : undefined,
       }}
       aria-hidden={hidden || undefined}
       data-pinned={pinned}
+      data-layer={layer}
+      data-hidden={hidden}
+      onPointerDownCapture={onRaise}
       aria-label={title}
       onPointerLeave={(event) => {
         // Moving into a plugin's iframe also "leaves" the panel's document:
@@ -195,6 +213,21 @@ export function Panel({
         <span className="panel__title">{title}</span>
         <span className="panel__actions">
           {meta}
+          <button
+            type="button"
+            className="icon-button"
+            aria-label={`Layer of ${title}`}
+            aria-haspopup="menu"
+            aria-expanded={menu !== null}
+            title="Layer"
+            onClick={(event) => {
+              const box = event.currentTarget.getBoundingClientRect();
+              setMenu(menu ? null : { x: box.right, y: box.bottom + 4 });
+              event.currentTarget.blur();
+            }}
+          >
+            <LayersIcon />
+          </button>
           <button
             type="button"
             className="icon-button"
@@ -216,7 +249,7 @@ export function Panel({
         className={content ? 'panel__body panel__body--fixed' : 'panel__body'}
         style={content ? { height: content.height } : undefined}
       >
-        <PanelGeometry.Provider value={{ ...position, ...size }}>{children}</PanelGeometry.Provider>
+        {children}
       </div>
       {resizable && (
         <div
@@ -227,7 +260,98 @@ export function Panel({
           {...gestureHandlers}
         />
       )}
+      {menu && !hidden && (
+        <LayerMenu
+          at={menu}
+          onTop={onTop}
+          onPick={(action) => {
+            onLayer(action);
+            setMenu(null);
+          }}
+          onClose={() => setMenu(null)}
+        />
+      )}
     </section>
+  );
+}
+
+/** Front, back, always on top. Drawn outside the panel (which clips its content). */
+function LayerMenu({
+  at,
+  onTop,
+  onPick,
+  onClose,
+}: {
+  at: { x: number; y: number };
+  onTop: boolean;
+  onPick: (action: LayerAction) => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const close = (event: globalThis.PointerEvent) => {
+      if (!ref.current?.contains(event.target as Node)) onClose();
+    };
+    // Next tick: the click that opened the menu must not close it.
+    const timer = setTimeout(() => document.addEventListener('pointerdown', close));
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('pointerdown', close);
+    };
+  }, [onClose]);
+  useLayoutEffect(() => {
+    geometryChanged();
+    return () => geometryChanged();
+  }, []);
+
+  const item = (action: LayerAction, label: string, checked?: boolean) => (
+    <button
+      type="button"
+      role={checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
+      aria-checked={checked}
+      className="menu__item"
+      onClick={() => onPick(action)}
+    >
+      <span className="menu__check" aria-hidden="true">
+        {checked ? '✓' : ''}
+      </span>
+      {label}
+    </button>
+  );
+
+  return createPortal(
+    <div
+      ref={ref}
+      role="menu"
+      className="glass menu"
+      // Anchored by its right edge, under the button. No transform: web panels
+      // measure this menu to cut it out of their view.
+      style={{ right: window.innerWidth - at.x, top: at.y, zIndex: MENU_LAYER }}
+      data-layer={MENU_LAYER}
+    >
+      {item('front', 'Bring to front')}
+      {item('back', 'Send to back')}
+      {item('toggle-on-top', 'Always on top', onTop)}
+    </div>,
+    document.querySelector('.stage') ?? document.body,
+  );
+}
+
+function LayersIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width="14"
+      height="14"
+      aria-hidden="true"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinejoin="round"
+    >
+      <path d="M8 2 14 5.2 8 8.4 2 5.2Z" />
+      <path d="M2 8.2 8 11.4 14 8.2M2 11 8 14.2 14 11" />
+    </svg>
   );
 }
 
