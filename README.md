@@ -46,6 +46,7 @@ Save several layouts ("Work", "Game") and bind them to the app in the foreground
 | Clock   | Time at a glance; stops ticking while hidden                                            |
 | Discord | The official Discord web app, in a panel (log in once, it stays connected while hidden) |
 | YouTube | The official YouTube site, in a panel; videos pause when the panel is hidden            |
+| Browser | Any site in a panel: address bar (address or DuckDuckGo search), back, forward, reload  |
 
 Discord and YouTube refuse to be embedded in a page, so they run as **web panels**: native WebKitGTK views placed by
 the core over their panel, with their own browsing data and no access to the app (Linux only for now). Links to other

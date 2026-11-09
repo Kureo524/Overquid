@@ -16,6 +16,7 @@ import {
   type OverlayMode,
   type Rect,
 } from './overlay';
+import { Browser } from './Browser';
 import { Panel } from './Panel';
 import { PluginFrame } from './PluginFrame';
 import { WebSlot } from './WebSlot';
@@ -213,7 +214,9 @@ export function App() {
               hidden={!visible(plugin.id)}
               {...panelProps(plugin.id)}
             >
-              {plugin.web ? (
+              {plugin.web?.browser ? (
+                <Browser pluginId={plugin.id} name={plugin.name} visible={onScreen(plugin.id)} />
+              ) : plugin.web ? (
                 <WebSlot pluginId={plugin.id} name={plugin.name} visible={onScreen(plugin.id)} />
               ) : (
                 <PluginFrame plugin={plugin} visible={onScreen(plugin.id)} />
