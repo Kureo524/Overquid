@@ -41,15 +41,16 @@ Save several layouts ("Work", "Game") and bind them to the app in the foreground
 
 ## Shipped plugins
 
-| Plugin   | What it is                                                                              |
-| -------- | --------------------------------------------------------------------------------------- |
-| Clock    | Time at a glance; stops ticking while hidden                                            |
-| Notes    | A scratchpad, saved as you type                                                         |
-| To-do    | Tasks to check off; clear the done ones in one click                                    |
-| Pomodoro | 25 min focus, 5 min breaks (15 after four); a notification at each change, even hidden  |
-| Discord  | The official Discord web app, in a panel (log in once, it stays connected while hidden) |
-| YouTube  | The official YouTube site, in a panel; videos pause when the panel is hidden            |
-| Browser  | Any site in a panel: address bar (address or DuckDuckGo search), back, forward, reload  |
+| Plugin      | What it is                                                                              |
+| ----------- | --------------------------------------------------------------------------------------- |
+| Clock       | Time at a glance; stops ticking while hidden                                            |
+| Notes       | A scratchpad, saved as you type                                                         |
+| To-do       | Tasks to check off; clear the done ones in one click                                    |
+| Pomodoro    | 25 min focus, 5 min breaks (15 after four); a notification at each change, even hidden  |
+| Discord     | The official Discord web app, in a panel (log in once, it stays connected while hidden) |
+| YouTube     | The official YouTube site, in a panel; videos pause when the panel is hidden            |
+| Browser     | Any site in a panel: address bar (address or DuckDuckGo search), back, forward, reload  |
+| Archipelago | Text client for an Archipelago multiworld room: log, received items, hints, chat        |
 
 The browser and YouTube can be opened several times ("Add panel" offers "Browser 2"); instances share their browsing
 data (one login) and each has its own page.
