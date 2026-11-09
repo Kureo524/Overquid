@@ -43,5 +43,6 @@
     }
   },
   "pull-request-title-pattern": "chore(release): release${component} ${version}",
-  "group-pull-request-title-pattern": "chore(release): release ${branch}"
+  "group-pull-request-title-pattern": "chore(release): release ${branch}",
+  "pull-request-header": "Release prepared by release-please. Merging this pull request tags the release and attaches its packages; keep this header and the --- lines, release-please reads them back."
 }
