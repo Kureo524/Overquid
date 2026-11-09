@@ -86,9 +86,9 @@ describe('defaults and checks', () => {
     for (const bad of ['', '.x', 'a..b', 'Upper', 'a/b', 'a#2']) expect(isValidId(bad)).toBe(false);
   });
 
-  it('depends on the current SDK release', () => {
+  it('accepts the current SDK release', () => {
     const sdk = JSON.parse(readFileSync(new URL('../sdk/package.json', import.meta.url), 'utf8'));
-    expect(SDK_RANGE).toBe(`^${sdk.version}`);
+    expect(SDK_RANGE).toBe(`^${sdk.version.split('.')[0]}`);
   });
 
   it('knows the monorepo', () => {

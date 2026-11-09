@@ -1,0 +1,101 @@
+name: Release
+
+# release-please keeps a release PR open on main (changelog and versions).
+# Merging it tags the release; the jobs below then attach the Linux packages
+# to the app's GitHub release and publish the npm packages.
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  release-please:
+    name: Release PR and tags
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      app: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
+      sdk: ${{ steps.release.outputs['packages/sdk--release_created'] }}
+      create: ${{ steps.release.outputs['packages/create-overlay-plugin--release_created'] }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          target-branch: main
+
+  packages:
+    name: Linux packages
+    needs: release-please
+    if: needs.release-please.outputs.app == 'true'
+    # The oldest supported runner: packages built against older libraries
+    # install on more distributions.
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.tag }}
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libgtk-layer-shell-dev \
+            libayatana-appindicator3-dev librsvg2-dev rpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Builds the frontend, the shipped plugins and the scriptlets, then the
+      # .deb and .rpm (targets in tauri.conf.json).
+      - run: pnpm desktop build
+      - name: Attach packages to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release-please.outputs.tag }}
+        run: |
+          gh release upload "$TAG" \
+            target/release/bundle/deb/*.deb \
+            target/release/bundle/rpm/*.rpm \
+            --clobber
+
+  npm:
+    name: npm packages
+    needs: release-please
+    if: needs.release-please.outputs.sdk == 'true' || needs.release-please.outputs.create == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - name: Publish @overquid/sdk
+        if: needs.release-please.outputs.sdk == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          pnpm --filter @overquid/sdk build
+          pnpm --filter @overquid/sdk publish --access public --provenance --no-git-checks
+      - name: Publish create-overlay-plugin
+        if: needs.release-please.outputs.create == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: pnpm --filter create-overlay-plugin publish --access public --provenance --no-git-checks

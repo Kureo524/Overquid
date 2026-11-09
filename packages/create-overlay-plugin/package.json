@@ -17,5 +17,13 @@
   },
   "devDependencies": {
     "vitest": "^5.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kureo524/Overquid.git",
+    "directory": "packages/create-overlay-plugin"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

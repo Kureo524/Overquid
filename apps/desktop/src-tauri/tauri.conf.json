@@ -28,7 +28,7 @@
     }
   },
   "bundle": {
-    "active": false,
+    "active": true,
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.png"],
     "resources": {
       "../../../plugins/dev.overquid.clock/manifest.json": "plugins/dev.overquid.clock/manifest.json",
@@ -43,6 +43,20 @@
       "../../../plugins/dev.overquid.todo/dist/": "plugins/dev.overquid.todo/dist/",
       "../../../plugins/dev.overquid.pomodoro/manifest.json": "plugins/dev.overquid.pomodoro/manifest.json",
       "../../../plugins/dev.overquid.pomodoro/dist/": "plugins/dev.overquid.pomodoro/dist/"
+    },
+    "targets": ["deb", "rpm"],
+    "category": "Utility",
+    "shortDescription": "A universal, plugin-driven desktop overlay",
+    "longDescription": "Overquid is an overlay toggled by a global hotkey, on top of any app: notes, to-do, Pomodoro, Discord, YouTube, a browser\u2026 every feature is a plugin built on a public SDK.",
+    "homepage": "https://github.com/Kureo524/Overquid",
+    "license": "MIT",
+    "linux": {
+      "deb": {
+        "depends": ["libgtk-layer-shell0", "gstreamer1.0-plugins-good", "gstreamer1.0-libav"]
+      },
+      "rpm": {
+        "depends": ["gtk-layer-shell", "gstreamer1-plugins-good"]
+      }
     }
   }
 }
