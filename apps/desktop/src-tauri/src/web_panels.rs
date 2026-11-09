@@ -104,7 +104,18 @@ pub enum Navigation {
 const PAUSE_MEDIA: &str = "document.querySelectorAll('video, audio').forEach((m) => m.pause())";
 
 #[cfg(target_os = "linux")]
-pub use linux::{install, navigate, place, unload_all};
+pub use linux::{install, navigate, place, set_content_filter, unload_all};
+
+#[cfg(not(target_os = "linux"))]
+pub fn set_content_filter(
+    _compiled: Option<crate::content_filter::Compiled>,
+    _store: std::path::PathBuf,
+    done: impl FnOnce(Result<(), String>) + 'static,
+) {
+    done(Err(
+        "content filtering is only supported on Linux for now".into()
+    ));
+}
 
 #[cfg(not(target_os = "linux"))]
 pub fn unload_all(done: impl FnOnce() + 'static) {
@@ -144,9 +155,13 @@ mod linux {
     use webkit2gtk::{
         CookieManagerExt, CookiePersistentStorage, LoadEvent, NavigationPolicyDecision,
         NavigationPolicyDecisionExt, NavigationType, PolicyDecisionExt, PolicyDecisionType,
-        SettingsExt, URIRequestExt, WebContext, WebView, WebViewExt, WebsiteDataManager,
-        WebsiteDataManagerExt,
+        SettingsExt, URIRequestExt, UserContentInjectedFrames, UserContentManagerExt, UserScript,
+        UserScriptInjectionTime, UserStyleLevel, UserStyleSheet, WebContext, WebView, WebViewExt,
+        WebsiteDataManager, WebsiteDataManagerExt,
     };
+
+    use crate::content_filter::{Compiled, page_resources};
+    use crate::webkit_filter;
 
     use super::{DataDirs, Hole, Hooks, Navigation, PAUSE_MEDIA, PageState, rounded_rectangles};
     use crate::plugins::{WebSpec, host_allowed, https_host, resolve_input};
@@ -166,6 +181,14 @@ mod linux {
         static RECTS: RefCell<Vec<Placed>> = const { RefCell::new(Vec::new()) };
         /// Set while a covered view draws its visible parts one by one.
         static NESTED_DRAW: Cell<bool> = const { Cell::new(false) };
+        /// The content filter, when switched on (ADR 0005).
+        static FILTERING: RefCell<Option<Filtering>> = const { RefCell::new(None) };
+    }
+
+    struct Filtering {
+        engine: Rc<adblock::Engine>,
+        /// Network rules compiled by WebKit; `None` until ready.
+        network: Option<webkit_filter::Filter>,
     }
 
     struct Placed {
@@ -524,7 +547,145 @@ mod linux {
                 view.load_html(CRASHED_PAGE, None);
             }
         });
+        // Content filter: each page gets the scriptlets and hiding rules of
+        // its site before its own scripts run.
+        view.connect_load_changed(|view, event| {
+            if matches!(event, LoadEvent::Started | LoadEvent::Redirected) {
+                filter_page(view);
+            }
+        });
+        if let Some(manager) = view.user_content_manager() {
+            FILTERING.with(|filtering| {
+                if let Some(network) = filtering.borrow().as_ref().and_then(|f| f.network.as_ref())
+                {
+                    webkit_filter::add(&manager, network);
+                }
+            });
+        }
         view
+    }
+
+    /// Replaces the page scripts and styles of `view` with those of the page it
+    /// is loading (none when the filter is off).
+    fn filter_page(view: &WebView) {
+        let Some(manager) = view.user_content_manager() else {
+            return;
+        };
+        manager.remove_all_scripts();
+        manager.remove_all_style_sheets();
+        let engine =
+            FILTERING.with(|filtering| filtering.borrow().as_ref().map(|f| f.engine.clone()));
+        let (Some(engine), Some(uri)) = (engine, view.uri()) else {
+            return;
+        };
+        let page = page_resources(&engine, &uri);
+        if !page.script.is_empty() {
+            manager.add_script(&UserScript::new(
+                &page.script,
+                UserContentInjectedFrames::TopFrame,
+                UserScriptInjectionTime::Start,
+                &[],
+                &[],
+            ));
+        }
+        if !page.style.is_empty() {
+            manager.add_style_sheet(&UserStyleSheet::new(
+                &page.style,
+                UserContentInjectedFrames::TopFrame,
+                UserStyleLevel::User,
+                &[],
+                &[],
+            ));
+        }
+    }
+
+    /// Switches the content filter on with `compiled`, or off with `None`, for
+    /// every web panel, then reloads them. Network rules are compiled by WebKit
+    /// into `store` once (slow the first time), then loaded from there.
+    pub fn set_content_filter(
+        compiled: Option<Compiled>,
+        store: std::path::PathBuf,
+        done: impl FnOnce(Result<(), String>) + 'static,
+    ) {
+        let Some(compiled) = compiled else {
+            FILTERING.with(|filtering| *filtering.borrow_mut() = None);
+            for view in all_views() {
+                if let Some(manager) = view.user_content_manager() {
+                    webkit_filter::remove_all(&manager);
+                }
+                filter_page(&view);
+                view.reload();
+            }
+            done(Ok(()));
+            return;
+        };
+        let Compiled {
+            engine,
+            network_rules,
+            id,
+            ..
+        } = compiled;
+        FILTERING.with(|filtering| {
+            *filtering.borrow_mut() = Some(Filtering {
+                engine: Rc::new(engine),
+                network: None,
+            });
+        });
+        let _ = std::fs::create_dir_all(&store);
+        let Some(store) = webkit_filter::Store::new(&store) else {
+            apply_network(None);
+            done(Err("cannot open the content filter store".into()));
+            return;
+        };
+        let store = Rc::new(store);
+        let again = store.clone();
+        store.load(&id.clone(), move |loaded| match loaded {
+            Ok(filter) => {
+                apply_network(Some(filter));
+                done(Ok(()));
+            }
+            // First time with these rules: compile them.
+            Err(_) => again.save(&id, &network_rules, move |saved| match saved {
+                Ok(filter) => {
+                    apply_network(Some(filter));
+                    done(Ok(()));
+                }
+                Err(error) => {
+                    // Page rules (scriptlets, hiding) still apply.
+                    apply_network(None);
+                    done(Err(format!("network rules: {error}")));
+                }
+            }),
+        });
+    }
+
+    /// Gives every view the network rules (if any) and reloads it, so the
+    /// whole filter applies to the page on screen.
+    fn apply_network(filter: Option<webkit_filter::Filter>) {
+        FILTERING.with(|filtering| {
+            if let Some(filtering) = filtering.borrow_mut().as_mut() {
+                filtering.network = filter.clone();
+            }
+        });
+        for view in all_views() {
+            if let Some(manager) = view.user_content_manager() {
+                webkit_filter::remove_all(&manager);
+                if let Some(filter) = &filter {
+                    webkit_filter::add(&manager, filter);
+                }
+            }
+            view.reload();
+        }
+    }
+
+    fn all_views() -> Vec<WebView> {
+        STATE.with(|state| {
+            state
+                .borrow()
+                .as_ref()
+                .map(|state| state.views.values().cloned().collect())
+                .unwrap_or_default()
+        })
     }
 
     /// How many times a crashed web panel is reloaded before giving up.

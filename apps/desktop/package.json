@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "pnpm scriptlets && vite build",
     "typecheck": "tsc --noEmit",
     "tauri": "tauri",
-    "test": "vitest run"
+    "test": "vitest run",
+    "scriptlets": "node scripts/ubo-scriptlets.mjs"
   },
   "dependencies": {
     "@overquid/sdk": "workspace:*",
