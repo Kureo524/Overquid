@@ -21,11 +21,25 @@ export interface Overlays {
 
 export const OVERLAYS_VERSION = 2;
 
-/** What `parseOverlays` read: `migrated` when it came from a one-overlay layout. */
+/**
+ * Panels to add to the first overlay once plugins are listed: every installed
+ * one when migrating a layout from before overlays (nothing disappears), a
+ * few light ones on a first run.
+ */
+export type Fill = 'installed' | 'starter' | null;
+
+/** The panels a first run opens, when installed; the others are in "Add panel". */
+export const STARTER_PANELS = [
+  'welcome',
+  'dev.overquid.clock',
+  'dev.overquid.notes',
+  'dev.overquid.todo',
+];
+
+/** What `parseOverlays` read, and what to add to it. */
 export interface Loaded {
   overlays: Overlays;
-  /** Panels to add with their default layout: everything installed, on first run or migration. */
-  fillWithInstalled: boolean;
+  fill: Fill;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -56,14 +70,16 @@ export function parseOverlays(value: unknown): Loaded {
       const first = overlays[0] as Overlay;
       const active =
         typeof value.active === 'string' && ids.has(value.active) ? value.active : first.id;
-      return { overlays: { active, overlays }, fillWithInstalled: false };
+      return { overlays: { active, overlays }, fill: null };
     }
   }
-  // Version 1, nothing saved yet, or unreadable: one overlay with everything.
+  // Version 1: one overlay with everything. Nothing saved yet, or unreadable:
+  // a first run.
+  const v1 = isRecord(value) && value.version === 1;
   const panels = migrateLayout(parseLayout(value));
   return {
     overlays: { active: MAIN.id, overlays: [{ ...MAIN, panels }] },
-    fillWithInstalled: true,
+    fill: v1 ? 'installed' : 'starter',
   };
 }
 

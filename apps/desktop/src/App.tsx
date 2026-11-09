@@ -23,6 +23,8 @@ import {
   switchByName,
   toggleApp,
   updatePanel,
+  STARTER_PANELS,
+  type Fill,
   type Overlays,
 } from './overlays';
 import { OverlayBar } from './OverlayBar';
@@ -140,15 +142,15 @@ type OverlaySwitch = { kind: 'next' } | { kind: 'prev' } | { kind: 'switch'; nam
 
 /**
  * The saved overlays (null until loaded) and a setter that also saves them.
- * A first run, or a layout saved before overlays existed, fills the first
- * overlay with every panel once the plugins are listed.
+ * A first run opens a few light panels (`STARTER_PANELS`); a layout saved
+ * before overlays existed gets every installed panel, so nothing disappears.
  */
 function useOverlays(
   plugins: PluginManifest[] | null,
   defaults: (id: PanelId) => PanelLayout,
 ): [Overlays | null, (next: Overlays) => void] {
   const [overlays, setOverlays] = useState<Overlays | null>(null);
-  const [fill, setFill] = useState(false);
+  const [fill, setFill] = useState<Fill>(null);
 
   const commit = (next: Overlays) => {
     setOverlays(next);
@@ -161,13 +163,13 @@ function useOverlays(
       (loaded) => {
         if (!active) return;
         setOverlays(loaded.overlays);
-        setFill(loaded.fillWithInstalled);
+        setFill(loaded.fill);
       },
       (error: unknown) => {
         console.error('Cannot load the overlays:', error);
         if (active) {
           setOverlays({ active: 'main', overlays: [{ id: 'main', name: 'Main', panels: {} }] });
-          setFill(true);
+          setFill('starter');
         }
       },
     );
@@ -178,8 +180,10 @@ function useOverlays(
 
   useEffect(() => {
     if (!fill || !overlays || !plugins) return;
-    setFill(false);
-    const ids = ['welcome', ...plugins.map((plugin) => plugin.id)];
+    setFill(null);
+    const installed = ['welcome', ...plugins.map((plugin) => plugin.id)];
+    const ids =
+      fill === 'starter' ? installed.filter((id) => STARTER_PANELS.includes(id)) : installed;
     commit(addPanels(overlays, Object.fromEntries(ids.map((id) => [id, defaults(id)]))));
   });
 
