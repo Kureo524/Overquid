@@ -1,15 +1,45 @@
-import { useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode } from 'react';
-import { toPlacement, toPosition, type Placement, type Position, type Size } from './layout';
+import {
+  createContext,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type PointerEvent,
+  type ReactNode,
+} from 'react';
+import {
+  clampSize,
+  toPlacement,
+  toPosition,
+  type Placement,
+  type Position,
+  type Size,
+} from './layout';
+
+/**
+ * Where a panel currently is on screen, updated on every frame of a drag or a
+ * resize. Content that must follow the panel outside the DOM (a web panel's
+ * native view) reads it, so it re-renders even though its own props did not
+ * change.
+ */
+export const PanelGeometry = createContext<Position & Size>({ x: 0, y: 0, width: 0, height: 0 });
 
 interface PanelProps {
   title: string;
   meta?: ReactNode;
   width: number;
+  /**
+   * Height of the content area. When set, the content fills it and the panel
+   * can be resized from its bottom-right corner (with `onResize`); otherwise
+   * the panel takes the height of its content.
+   */
+  contentHeight?: number | undefined;
   placement: Placement;
   viewport: Size;
   pinned: boolean;
   /** Called once a drag ends, with where the panel was dropped. */
   onPlace: (placement: Placement) => void;
+  /** Called once a resize ends, with the new content size and placement. */
+  onResize?: ((size: Size, placement: Placement) => void) | undefined;
   onTogglePin: () => void;
   onPointerLeave?: (() => void) | undefined;
   /** Kept in the page but not shown (plugin panels stay loaded while hidden). */
@@ -17,15 +47,25 @@ interface PanelProps {
   children: ReactNode;
 }
 
-/** A glass panel that can be dragged by its title bar and pinned. */
+/** Height around the content area: borders, title bar and body padding (styles.css). */
+const CHROME_HEIGHT = 2 + 32 + 30;
+const BORDER_WIDTH = 2;
+
+type Gesture =
+  | { kind: 'drag'; dx: number; dy: number }
+  | { kind: 'resize'; x: number; y: number; from: Size; at: Position };
+
+/** A glass panel that can be dragged by its title bar, resized and pinned. */
 export function Panel({
   title,
   meta,
   width,
+  contentHeight,
   placement,
   viewport,
   pinned,
   onPlace,
+  onResize,
   onTogglePin,
   onPointerLeave,
   hidden = false,
@@ -34,11 +74,10 @@ export function Panel({
   const ref = useRef<HTMLElement>(null);
   // Height depends on the content: measured, not passed in.
   const [height, setHeight] = useState(0);
-  const size: Size = { width, height };
-  // While dragging, the panel follows the pointer; the placement is only
-  // updated (and saved) on drop.
-  const [dragged, setDragged] = useState<Position | null>(null);
-  const drag = useRef<{ dx: number; dy: number } | null>(null);
+  // While dragging or resizing, the panel follows the pointer; the layout is
+  // only updated (and saved) once the gesture ends.
+  const [live, setLive] = useState<{ position: Position; content?: Size } | null>(null);
+  const gesture = useRef<Gesture | null>(null);
 
   useLayoutEffect(() => {
     const element = ref.current;
@@ -50,25 +89,81 @@ export function Panel({
     return () => observer.disconnect();
   }, []);
 
-  const position = dragged ?? toPosition(placement, size, viewport);
+  const resizable = contentHeight !== undefined && onResize !== undefined;
+  const content: Size | null =
+    live?.content ?? (contentHeight === undefined ? null : { width, height: contentHeight });
+  const panelWidth = content?.width ?? width;
+  const size: Size = {
+    width: panelWidth + BORDER_WIDTH,
+    height: content ? content.height + CHROME_HEIGHT : height,
+  };
+  const position = live?.position ?? toPosition(placement, size, viewport);
 
-  const onPointerDown = (event: PointerEvent<HTMLElement>) => {
-    if (event.button !== 0 || (event.target as Element).closest('button')) return;
-    drag.current = { dx: event.clientX - position.x, dy: event.clientY - position.y };
+  const startGesture = (event: PointerEvent<HTMLElement>, next: Gesture) => {
+    gesture.current = next;
     event.currentTarget.setPointerCapture(event.pointerId);
   };
-  const onPointerMove = (event: PointerEvent<HTMLElement>) => {
-    if (!drag.current) return;
-    const x = Math.round(event.clientX - drag.current.dx);
-    const y = Math.round(event.clientY - drag.current.dy);
-    // Clamp through a placement round trip, so the panel cannot leave the screen.
-    setDragged(toPosition(toPlacement({ x, y }, size, viewport), size, viewport));
+
+  const onBarDown = (event: PointerEvent<HTMLElement>) => {
+    if (event.button !== 0 || (event.target as Element).closest('button')) return;
+    startGesture(event, {
+      kind: 'drag',
+      dx: event.clientX - position.x,
+      dy: event.clientY - position.y,
+    });
   };
-  const endDrag = () => {
-    drag.current = null;
-    if (!dragged) return;
-    onPlace(toPlacement(dragged, size, viewport));
-    setDragged(null);
+
+  const onResizeDown = (event: PointerEvent<HTMLElement>) => {
+    if (event.button !== 0 || !content) return;
+    event.stopPropagation();
+    startGesture(event, {
+      kind: 'resize',
+      x: event.clientX,
+      y: event.clientY,
+      from: content,
+      at: position,
+    });
+  };
+
+  const onMove = (event: PointerEvent<HTMLElement>) => {
+    const current = gesture.current;
+    if (!current) return;
+    if (current.kind === 'drag') {
+      const x = Math.round(event.clientX - current.dx);
+      const y = Math.round(event.clientY - current.dy);
+      // Clamp through a placement round trip, so the panel cannot leave the screen.
+      setLive({ position: toPosition(toPlacement({ x, y }, size, viewport), size, viewport) });
+      return;
+    }
+    // The top-left corner stays put; the content may grow up to the screen edge.
+    const max = {
+      width: viewport.width - current.at.x - BORDER_WIDTH,
+      height: viewport.height - current.at.y - CHROME_HEIGHT,
+    };
+    const next = clampSize(
+      {
+        width: current.from.width + event.clientX - current.x,
+        height: current.from.height + event.clientY - current.y,
+      },
+      max,
+    );
+    setLive({ position: current.at, content: next });
+  };
+
+  const endGesture = () => {
+    const current = gesture.current;
+    gesture.current = null;
+    if (!current || !live) return;
+    const placed = toPlacement(live.position, size, viewport);
+    if (current.kind === 'resize' && live.content) onResize?.(live.content, placed);
+    else onPlace(placed);
+    setLive(null);
+  };
+
+  const gestureHandlers = {
+    onPointerMove: onMove,
+    onPointerUp: endGesture,
+    onPointerCancel: endGesture,
   };
 
   return (
@@ -76,7 +171,7 @@ export function Panel({
       ref={ref}
       className="glass panel"
       style={{
-        width,
+        width: panelWidth,
         left: position.x,
         top: position.y,
         visibility: hidden ? 'hidden' : undefined,
@@ -96,13 +191,7 @@ export function Panel({
         if (!inside) onPointerLeave?.();
       }}
     >
-      <header
-        className="panel__bar"
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
-      >
+      <header className="panel__bar" onPointerDown={onBarDown} {...gestureHandlers}>
         <span className="panel__title">{title}</span>
         <span className="panel__actions">
           {meta}
@@ -123,7 +212,21 @@ export function Panel({
           </button>
         </span>
       </header>
-      <div className="panel__body">{children}</div>
+      <div
+        className={content ? 'panel__body panel__body--fixed' : 'panel__body'}
+        style={content ? { height: content.height } : undefined}
+      >
+        <PanelGeometry.Provider value={{ ...position, ...size }}>{children}</PanelGeometry.Provider>
+      </div>
+      {resizable && (
+        <div
+          className="panel__resize"
+          aria-hidden="true"
+          title="Resize"
+          onPointerDown={onResizeDown}
+          {...gestureHandlers}
+        />
+      )}
     </section>
   );
 }

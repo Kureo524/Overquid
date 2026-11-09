@@ -202,23 +202,21 @@ export function App() {
       {layout !== null &&
         plugins.map((plugin) => {
           const [width, height] = plugin.panel.defaultSize ?? DEFAULT_PLUGIN_SIZE;
+          const size = panel(plugin.id).size ?? { width, height };
           return (
             <Panel
               key={plugin.id}
               title={plugin.name}
-              width={width}
+              width={size.width}
+              contentHeight={size.height}
+              onResize={(next, placement) => updateLayout(plugin.id, { size: next, placement })}
               hidden={!visible(plugin.id)}
               {...panelProps(plugin.id)}
             >
               {plugin.web ? (
-                <WebSlot
-                  pluginId={plugin.id}
-                  name={plugin.name}
-                  height={height}
-                  visible={onScreen(plugin.id)}
-                />
+                <WebSlot pluginId={plugin.id} name={plugin.name} visible={onScreen(plugin.id)} />
               ) : (
-                <PluginFrame plugin={plugin} height={height} visible={onScreen(plugin.id)} />
+                <PluginFrame plugin={plugin} visible={onScreen(plugin.id)} />
               )}
             </Panel>
           );

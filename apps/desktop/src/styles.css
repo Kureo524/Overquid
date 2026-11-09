@@ -187,3 +187,29 @@ kbd {
     }
   }
 }
+
+.panel__body--fixed > * {
+  height: 100%;
+}
+
+.panel__resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
+.panel__resize::after {
+  content: '';
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid var(--text-3);
+  border-bottom: 1.5px solid var(--text-3);
+  border-bottom-right-radius: 2px;
+}

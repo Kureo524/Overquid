@@ -3,13 +3,12 @@ import { pluginUrl, registerFrame, sendVisibility, type PluginManifest } from '.
 
 interface PluginFrameProps {
   plugin: PluginManifest;
-  height: number;
   /** Whether the panel is on screen; the plugin is told on every change. */
   visible: boolean;
 }
 
 /** A plugin's UI: a sandboxed iframe, scripts only (ADR 0003). */
-export function PluginFrame({ plugin, height, visible }: PluginFrameProps) {
+export function PluginFrame({ plugin, visible }: PluginFrameProps) {
   const ref = useRef<HTMLIFrameElement>(null);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
@@ -38,7 +37,6 @@ export function PluginFrame({ plugin, height, visible }: PluginFrameProps) {
       title={plugin.name}
       src={pluginUrl(plugin.id, plugin.entry ?? '')}
       sandbox="allow-scripts"
-      style={{ height }}
       onLoad={onLoad}
     />
   );

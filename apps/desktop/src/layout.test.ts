@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
-const { migrateLayout, parseLayout, serializeLayout, toPlacement, toPosition } =
+const { clampSize, migrateLayout, parseLayout, serializeLayout, toPlacement, toPosition } =
   await import('./layout');
 
 const laptop = { width: 1920, height: 1080 };
@@ -58,6 +58,22 @@ describe('parseLayout', () => {
     expect(parseLayout(JSON.parse(JSON.stringify(serializeLayout(layout))))).toEqual(layout);
   });
 
+  it('keeps a resized panel size and drops an invalid one', () => {
+    const value = {
+      version: 1,
+      panels: {
+        sized: { ...clockLayout, size: { width: 640.4, height: 400 } },
+        negative: { ...clockLayout, size: { width: -1, height: 400 } },
+        text: { ...clockLayout, size: { width: '640', height: 400 } },
+      },
+    };
+    expect(parseLayout(value)).toEqual({
+      sized: { ...clockLayout, size: { width: 640, height: 400 } },
+      negative: clockLayout,
+      text: clockLayout,
+    });
+  });
+
   it('falls back to an empty layout on unknown input', () => {
     expect(parseLayout(null)).toEqual({});
     expect(parseLayout('nope')).toEqual({});
@@ -77,6 +93,20 @@ describe('parseLayout', () => {
     expect(parseLayout(value)).toEqual({
       clock: clockLayout,
       noPinned: { placement: { h: 'left', v: 'top', dx: 1, dy: 2 }, pinned: false },
+    });
+  });
+});
+
+describe('clampSize', () => {
+  it('keeps a size between the minimum and the screen', () => {
+    expect(clampSize({ width: 10, height: 5000 }, laptop)).toEqual({ width: 160, height: 1080 });
+    expect(clampSize({ width: 500.6, height: 300 }, laptop)).toEqual({ width: 501, height: 300 });
+  });
+
+  it('never goes below the minimum, even on a tiny screen', () => {
+    expect(clampSize({ width: 100, height: 100 }, { width: 50, height: 50 })).toEqual({
+      width: 160,
+      height: 60,
     });
   });
 });
