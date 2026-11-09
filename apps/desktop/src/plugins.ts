@@ -19,6 +19,8 @@ export interface PluginManifest {
   panel: {
     defaultSize?: [number, number] | null;
     position?: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'center' | null;
+    /** Several panels of this plugin may be open at once (ADR 0007). */
+    multiple?: boolean;
   };
   permissions: string[];
   network: string[];

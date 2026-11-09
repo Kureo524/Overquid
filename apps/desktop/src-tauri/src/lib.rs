@@ -72,19 +72,16 @@ fn plugin_call<R: Runtime>(
 
 /// Places a web plugin's native view over `rect` (CSS pixels in the overlay
 /// window), minus the `holes` covered by panels in front of it, or hides it
-/// when `rect` is `None` (ADR 0004).
+/// when `rect` is `None` (ADR 0004). `panel_id` is the plugin's id, or
+/// `plugin#n` for another instance of it (ADR 0007).
 #[tauri::command(async)]
 fn web_panel<R: Runtime>(
     app: tauri::AppHandle<R>,
-    plugin_id: String,
+    panel_id: String,
     rect: Option<Rect>,
     holes: Vec<web_panels::Hole>,
 ) -> Result<(), String> {
-    let (_, manifest) = plugins::find(&plugin_roots(&app), &plugin_id)
-        .ok_or_else(|| format!("unknown plugin '{plugin_id}'"))?;
-    let spec = manifest
-        .web
-        .ok_or_else(|| format!("'{plugin_id}' is not a web plugin"))?;
+    let (plugin_id, spec) = web_spec(&app, &panel_id)?;
     let base = app
         .path()
         .app_data_dir()
@@ -99,7 +96,7 @@ fn web_panel<R: Runtime>(
             cache: base.join("cache"),
         };
         let pressed = events.clone();
-        let id = plugin_id.clone();
+        let id = panel_id.clone();
         let hooks = web_panels::Hooks {
             on_change: Box::new(move |page| {
                 let _ = events.emit(WEB_PAGE_EVENT, page);
@@ -109,7 +106,7 @@ fn web_panel<R: Runtime>(
             }),
         };
         let _ = tx.send(web_panels::place(
-            &plugin_id, &spec, dirs, rect, &holes, hooks,
+            &panel_id, &plugin_id, &spec, dirs, rect, &holes, hooks,
         ));
     })
     .map_err(|error| error.to_string())?;
@@ -118,24 +115,47 @@ fn web_panel<R: Runtime>(
 
 /// Sent with a `web_panels::PageState` whenever a web panel's page changes.
 const WEB_PAGE_EVENT: &str = "web-page";
-/// Sent with the plugin id when the user clicks in a web panel's page.
+/// The plugin of a web panel (`plugin` or `plugin#n`), and its web spec.
+/// Another instance needs a plugin that allows several (ADR 0007).
+fn web_spec<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    panel_id: &str,
+) -> Result<(String, plugins::WebSpec), String> {
+    let (plugin_id, instance) =
+        plugins::split_panel_id(panel_id).ok_or_else(|| format!("invalid panel '{panel_id}'"))?;
+    let (_, manifest) = plugins::find(&plugin_roots(app), plugin_id)
+        .ok_or_else(|| format!("unknown plugin '{plugin_id}'"))?;
+    if instance > 1 && !manifest.panel.multiple {
+        return Err(format!("'{plugin_id}' allows a single panel"));
+    }
+    let spec = manifest
+        .web
+        .ok_or_else(|| format!("'{plugin_id}' is not a web plugin"))?;
+    Ok((plugin_id.to_owned(), spec))
+}
+
+/// Closes a web panel instance for good: its page is destroyed (ADR 0007).
+#[tauri::command(async)]
+fn web_panel_close<R: Runtime>(app: tauri::AppHandle<R>, panel_id: String) -> Result<(), String> {
+    plugins::split_panel_id(&panel_id).ok_or_else(|| format!("invalid panel '{panel_id}'"))?;
+    app.run_on_main_thread(move || web_panels::close(&panel_id))
+        .map_err(|error| error.to_string())
+}
+
+/// Sent with the panel id when the user clicks in a web panel's page.
 const WEB_PANEL_PRESSED_EVENT: &str = "web-panel-pressed";
 
 /// Runs a browser button or address bar entry (ADR 0004).
 #[tauri::command(async)]
 fn web_navigate<R: Runtime>(
     app: tauri::AppHandle<R>,
-    plugin_id: String,
+    panel_id: String,
     navigation: web_panels::Navigation,
 ) -> Result<(), String> {
-    let (_, manifest) = plugins::find(&plugin_roots(&app), &plugin_id)
-        .ok_or_else(|| format!("unknown plugin '{plugin_id}'"))?;
-    let spec = manifest
-        .web
-        .ok_or_else(|| format!("'{plugin_id}' is not a web plugin"))?;
+    let (_, spec) = web_spec(&app, &panel_id)?;
     let (tx, rx) = std::sync::mpsc::channel();
     app.run_on_main_thread(move || {
-        let _ = tx.send(web_panels::navigate(&plugin_id, &spec, navigation));
+        let _ = tx.send(web_panels::navigate(&panel_id, &spec, navigation));
     })
     .map_err(|error| error.to_string())?;
     rx.recv().map_err(|error| error.to_string())?
@@ -453,6 +473,7 @@ pub fn run() {
             plugin_call,
             list_plugins,
             web_panel,
+            web_panel_close,
             web_navigate,
             content_filter_status,
             set_content_filter,
