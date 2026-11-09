@@ -36,7 +36,11 @@
       "../../../plugins/dev.overquid.discord/manifest.json": "plugins/dev.overquid.discord/manifest.json",
       "../../../plugins/dev.overquid.browser/manifest.json": "plugins/dev.overquid.browser/manifest.json",
       "../../../plugins/dev.overquid.youtube/manifest.json": "plugins/dev.overquid.youtube/manifest.json",
-      "resources/ubo-scriptlets.json": "ubo-scriptlets.json"
+      "resources/ubo-scriptlets.json": "ubo-scriptlets.json",
+      "../../../plugins/dev.overquid.notes/manifest.json": "plugins/dev.overquid.notes/manifest.json",
+      "../../../plugins/dev.overquid.notes/dist/": "plugins/dev.overquid.notes/dist/",
+      "../../../plugins/dev.overquid.todo/manifest.json": "plugins/dev.overquid.todo/manifest.json",
+      "../../../plugins/dev.overquid.todo/dist/": "plugins/dev.overquid.todo/dist/"
     }
   }
 }

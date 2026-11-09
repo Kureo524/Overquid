@@ -44,6 +44,8 @@ Save several layouts ("Work", "Game") and bind them to the app in the foreground
 | Plugin  | What it is                                                                              |
 | ------- | --------------------------------------------------------------------------------------- |
 | Clock   | Time at a glance; stops ticking while hidden                                            |
+| Notes   | A scratchpad, saved as you type                                                         |
+| To-do   | Tasks to check off; clear the done ones in one click                                    |
 | Discord | The official Discord web app, in a panel (log in once, it stays connected while hidden) |
 | YouTube | The official YouTube site, in a panel; videos pause when the panel is hidden            |
 | Browser | Any site in a panel: address bar (address or DuckDuckGo search), back, forward, reload  |
