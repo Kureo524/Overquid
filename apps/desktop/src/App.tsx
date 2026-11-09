@@ -61,14 +61,16 @@ function defaultLayout(id: PanelId, plugins: PluginManifest[]): PanelLayout {
   };
 }
 
-/** Installed plugins, and the broker relaying their calls (ADR 0003). */
-function usePlugins(): PluginManifest[] {
-  const [plugins, setPlugins] = useState<PluginManifest[]>([]);
+/** Installed plugins (null until listed), and the broker relaying their
+ * calls (ADR 0003). */
+function usePlugins(): PluginManifest[] | null {
+  const [plugins, setPlugins] = useState<PluginManifest[] | null>(null);
   useEffect(() => startBroker(), []);
   useEffect(() => {
-    listPlugins().then(setPlugins, (error: unknown) =>
-      console.error('Cannot list plugins:', error),
-    );
+    listPlugins().then(setPlugins, (error: unknown) => {
+      console.error('Cannot list plugins:', error);
+      setPlugins([]);
+    });
   }, []);
   return plugins;
 }
@@ -121,7 +123,8 @@ function useLayout(
 export function App() {
   const { mode, visibility } = useOverlayStatus();
   const viewport = useViewport();
-  const plugins = usePlugins();
+  const listed = usePlugins();
+  const plugins = listed ?? [];
   const defaults = (id: PanelId) => defaultLayout(id, plugins);
   const [layout, updateLayout] = useLayout(defaults);
   const lastRegions = useRef<Rect[] | null>(null);
@@ -137,9 +140,10 @@ export function App() {
 
   // Tell the core where the pinned panels are: in pinned mode they are the
   // only areas that take clicks. The first report after loading the layout
-  // also brings saved pinned panels back on screen.
+  // also brings saved pinned panels back on screen: it must wait for both the
+  // layout and the plugins, or pinned plugin panels are not in the page yet.
   useLayoutEffect(() => {
-    if (!layout) return;
+    if (!layout || !listed) return;
     const regions = regionsOf(document.querySelectorAll('[data-pinned="true"]'));
     const restore = restorePending.current;
     if (!restore && lastRegions.current && sameRegions(lastRegions.current, regions)) return;
