@@ -1,6 +1,14 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import {
+  filterEnabled,
+  isExcepted,
+  setSiteFilter,
+  siteOf,
+  useContentFilter,
+  useFilterExceptions,
+} from './contentFilter';
 import { WebSlot } from './WebSlot';
 
 /** What the core reports about a web panel's page (`web_panels::PageState`). */
@@ -37,6 +45,10 @@ function usePage(pluginId: string): PageState | null {
 /** A browser plugin: navigation bar over a web panel (ADR 0004). */
 export function Browser({ pluginId, name, visible }: BrowserProps) {
   const page = usePage(pluginId);
+  const filter = useContentFilter();
+  const exceptions = useFilterExceptions();
+  const site = page ? siteOf(page.url) : null;
+  const filtered = site !== null && !isExcepted(site, exceptions);
   // What the user is typing; null shows the page's address.
   const [draft, setDraft] = useState<string | null>(null);
   // A click that focuses the address bar selects it all: the mouse button
@@ -103,6 +115,20 @@ export function Browser({ pluginId, name, visible }: BrowserProps) {
           }}
           onBlur={() => setDraft(null)}
         />
+        {filterEnabled(filter) && site !== null && (
+          <BarButton
+            label={filtered ? `Turn the content filter off on ${site}` : `Filter ${site} again`}
+            pressed={filtered}
+            onClick={() => {
+              setSiteFilter(site, !filtered).catch((error: unknown) =>
+                console.error(`Content filter on ${site}:`, error),
+              );
+            }}
+          >
+            <path d="M8 1.8 13.2 3.8v4c0 3-2.2 5.3-5.2 6.4-3-1.1-5.2-3.4-5.2-6.4v-4Z" />
+            {!filtered && <path d="m3 3 10 10" />}
+          </BarButton>
+        )}
       </form>
       <WebSlot pluginId={pluginId} name={name} visible={visible} />
     </div>
@@ -112,11 +138,14 @@ export function Browser({ pluginId, name, visible }: BrowserProps) {
 function BarButton({
   label,
   disabled = false,
+  pressed,
   onClick,
   children,
 }: {
   label: string;
   disabled?: boolean;
+  /** For toggles: shown highlighted when on. */
+  pressed?: boolean;
   onClick: () => void;
   children: ReactNode;
 }) {
@@ -126,6 +155,7 @@ function BarButton({
       className="icon-button"
       aria-label={label}
       title={label}
+      aria-pressed={pressed}
       disabled={disabled}
       onClick={(event) => {
         onClick();

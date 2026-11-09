@@ -2,7 +2,7 @@
 //! with community lists. Off by default; the user switches it on.
 //!
 //! This module downloads and caches the lists, builds the engine and the
-//! network rules, and answers what to inject in a page. Applying it to the
+//! blocking rules, and answers what to inject in a page. Applying it to the
 //! web views is `web_panels`' job.
 
 use std::collections::hash_map::DefaultHasher;
@@ -67,10 +67,14 @@ const MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 /// No list is anywhere near this size (EasyList: ~2 MB).
 const MAX_LIST_BYTES: u64 = 32 * 1024 * 1024;
 
-/// Whether the user switched the filter on, saved in `content-filter.json`.
-#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
+/// The user's choices, saved in `content-filter.json`.
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Settings {
     pub enabled: bool,
+    /// Sites where the filter is off (see `site_of`), with their subdomains.
+    #[serde(default)]
+    pub disabled_sites: Vec<String>,
 }
 
 impl Settings {
@@ -80,10 +84,53 @@ impl Settings {
             .unwrap_or_default()
     }
 
-    pub fn save(self, path: &Path) -> Result<(), String> {
+    pub fn save(&self, path: &Path) -> Result<(), String> {
         let value = serde_json::to_value(self).map_err(|error| error.to_string())?;
-        crate::json_file::write(path, &value, 1024)
+        crate::json_file::write(path, &value, 256 * 1024)
     }
+
+    /// Switches the filter off (or back on) for `site`.
+    pub fn set_site(&mut self, site: &str, filtered: bool) {
+        self.disabled_sites.retain(|known| known != site);
+        if !filtered {
+            self.disabled_sites.push(site.to_owned());
+            self.disabled_sites.sort();
+        }
+    }
+}
+
+/// The site an exception is kept for: the host, without a leading `www.`.
+pub fn site_of(host: &str) -> String {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    host.strip_prefix("www.").map(str::to_owned).unwrap_or(host)
+}
+
+/// Whether the filter is off on `host`: an exception for it or a parent domain.
+pub fn is_excepted(host: &str, sites: &[String]) -> bool {
+    let host = site_of(host);
+    sites.iter().any(|site| {
+        host == *site
+            || host
+                .strip_suffix(site.as_str())
+                .is_some_and(|prefix| prefix.ends_with('.'))
+    })
+}
+
+/// Host of an `http(s)` URL, lowercased.
+pub fn host_of(url: &str) -> Option<String> {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let host = authority.rsplit('@').next()?.split(':').next()?;
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
+}
+
+/// Whether a list is missing from the cache or older than a day.
+pub fn lists_stale(cache: &Path) -> bool {
+    LISTS
+        .iter()
+        .any(|list| !is_fresh(&cache.join(format!("{}.txt", list.name))))
 }
 
 /// What the interface shows about the filter.
@@ -102,12 +149,14 @@ pub enum Status {
     },
 }
 
-/// The engine and the network rules built from the lists.
+/// The engine and WebKit's blocking rules, built from the lists.
 pub struct Compiled {
     pub engine: Engine,
-    /// Network rules in WebKit's content blocker format (Safari's JSON).
-    pub network_rules: String,
-    /// Identifies `network_rules`: WebKit keeps compiled rules under it.
+    /// Network rules for WebKit's content blocker (Safari's JSON).
+    pub blocker_rules: String,
+    /// Elements hidden on every site.
+    pub generic: Generic,
+    /// Identifies `blocker_rules`: WebKit keeps compiled rules under it.
     pub id: String,
     pub lists: usize,
     pub scriptlets: usize,
@@ -197,22 +246,27 @@ pub fn load_scriptlets(path: &Path) -> Vec<Resource> {
         .unwrap_or_default()
 }
 
-/// Builds the engine (every rule, for pages) and the network rules (for WebKit).
+/// Builds the engine (scriptlets and site rules, for pages), the network
+/// rules (compiled by WebKit) and the generic hiding rules.
 pub fn compile(
     lists: Vec<(&'static List, String)>,
     scriptlets: Vec<Resource>,
 ) -> Result<Compiled, String> {
     let count = lists.len();
+    let generic = Generic::from_lists(lists.iter().map(|(_, text)| text.as_str()));
     let mut full = FilterSet::new(false);
     // Debug mode keeps the raw rules, which the conversion needs.
-    let mut network = FilterSet::new(true);
+    let mut blocker = FilterSet::new(true);
     for (list, text) in lists {
         let permissions = if list.trusted {
             TRUSTED
         } else {
             PermissionMask::default()
         };
-        network.add_filter_list(
+        // Network rules only: WebKit groups hiding rules into large CSS
+        // rules, where one selector it does not support voids the whole
+        // group. Hiding rules go in style sheets of their own (`Generic`).
+        blocker.add_filter_list(
             text.clone(),
             ParseOptions {
                 rule_types: RuleTypes::NetworkOnly,
@@ -231,17 +285,91 @@ pub fn compile(
     let scriptlet_count = scriptlets.len();
     let mut engine = Engine::new_with_filter_set(full);
     engine.use_resources(scriptlets);
-    let (rules, _) = network
+    let (rules, _) = blocker
         .into_content_blocking()
-        .map_err(|()| "cannot convert the network rules".to_owned())?;
-    let network_rules = serde_json::to_string(&rules).map_err(|error| error.to_string())?;
+        .map_err(|()| "cannot convert the blocking rules".to_owned())?;
+    let blocker_rules = serde_json::to_string(&rules).map_err(|error| error.to_string())?;
     Ok(Compiled {
         engine,
-        id: rules_id(&network_rules),
-        network_rules,
+        generic,
+        id: rules_id(&blocker_rules),
+        blocker_rules,
         lists: count,
         scriptlets: scriptlet_count,
     })
+}
+
+/// Elements hidden on every site (`##selector`), minus the generic exceptions
+/// (`#@#selector`). Procedural rules (uBlock Origin's `:has-text()` and the
+/// like) are left out: they are not CSS.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Generic {
+    pub selectors: Vec<String>,
+}
+
+/// Markers of uBlock Origin and Adblock Plus extensions to CSS selectors.
+const PROCEDURAL: &[&str] = &[
+    ":-abp-",
+    ":has-text(",
+    ":contains(",
+    ":upward(",
+    ":xpath(",
+    ":matches-",
+    ":style(",
+    ":remove(",
+    ":remove-attr(",
+    ":remove-class(",
+    ":min-text-length(",
+    ":watch-attr(",
+    ":others(",
+    ":if(",
+    ":if-not(",
+    ":nth-ancestor(",
+    ":spath(",
+];
+
+impl Generic {
+    fn from_lists<'a>(lists: impl Iterator<Item = &'a str>) -> Generic {
+        let mut hide = std::collections::BTreeSet::new();
+        let mut unhide = std::collections::HashSet::new();
+        for line in lists.flat_map(str::lines) {
+            let line = line.trim();
+            if let Some(selector) = line.strip_prefix("##") {
+                if is_plain_selector(selector) {
+                    hide.insert(selector);
+                }
+            } else if let Some(selector) = line.strip_prefix("#@#") {
+                unhide.insert(selector);
+            }
+        }
+        Generic {
+            selectors: hide
+                .into_iter()
+                .filter(|selector| !unhide.contains(selector))
+                .map(str::to_owned)
+                .collect(),
+        }
+    }
+
+    /// One rule per selector, so that a selector the engine does not support
+    /// only voids its own rule. `except` lists selectors the site unhides.
+    pub fn style(&self, except: &std::collections::HashSet<String>) -> String {
+        self.selectors
+            .iter()
+            .filter(|selector| !except.contains(*selector))
+            .map(|selector| format!("{selector} {{ display: none !important; }}\n"))
+            .collect()
+    }
+}
+
+fn is_plain_selector(selector: &str) -> bool {
+    !selector.is_empty()
+        // Scriptlets (`+js`) and HTML filters (`^`) are not selectors.
+        && !selector.starts_with('+')
+        && !selector.starts_with('^')
+        // Never let a rule close the style sheet's block.
+        && !selector.contains(['{', '}'])
+        && !PROCEDURAL.iter().any(|marker| selector.contains(marker))
 }
 
 /// Short, stable identifier of a rule set.
@@ -258,6 +386,10 @@ pub struct PageResources {
     pub script: String,
     /// Elements to hide on this site (`##selector`).
     pub style: String,
+    /// Whether the generic hiding rules apply (`$generichide` turns them off).
+    pub generic: bool,
+    /// Generic selectors this site unhides (`site#@#selector`).
+    pub generic_exceptions: std::collections::HashSet<String>,
 }
 
 pub fn page_resources(engine: &Engine, url: &str) -> PageResources {
@@ -272,6 +404,8 @@ pub fn page_resources(engine: &Engine, url: &str) -> PageResources {
     PageResources {
         script: resources.injected_script,
         style,
+        generic: !resources.generichide,
+        generic_exceptions: resources.exceptions,
     }
 }
 
@@ -347,14 +481,12 @@ mod tests {
         assert!(page.script.contains("function say(word)"));
         assert!(page.script.contains("say(\"hi\")"), "{}", page.script);
         assert_eq!(page.style, ".ad-banner { display: none !important; }\n");
-        assert_eq!(
-            page_resources(&compiled.engine, "https://other.org/"),
-            PageResources::default()
-        );
+        let other = page_resources(&compiled.engine, "https://other.org/");
+        assert!(other.script.is_empty() && other.style.is_empty());
         assert!(
-            compiled.network_rules.contains("ads"),
+            compiled.blocker_rules.contains("ads"),
             "{}",
-            compiled.network_rules
+            compiled.blocker_rules
         );
         assert!(compiled.id.starts_with("overquid-"));
     }
@@ -378,6 +510,90 @@ mod tests {
     }
 
     #[test]
+    fn keeps_generic_hiding_rules_out_of_the_blocker() {
+        let lists = vec![(
+            &OTHER_LIST,
+            "##.sponsored-tile\n##.ad:has-text(Ad)\n##+js(noop)\n##.gone\n#@#.gone\n##a{}\n"
+                .to_owned(),
+        )];
+        let compiled = compile(lists, Vec::new()).unwrap();
+        assert!(!compiled.blocker_rules.contains("css-display-none"));
+        assert_eq!(compiled.generic.selectors, [".sponsored-tile"]);
+        let none = std::collections::HashSet::new();
+        assert_eq!(
+            compiled.generic.style(&none),
+            ".sponsored-tile { display: none !important; }\n"
+        );
+        let except = [".sponsored-tile".to_owned()].into();
+        assert_eq!(compiled.generic.style(&except), "");
+    }
+
+    #[test]
+    fn sites_can_turn_generic_hiding_off() {
+        let rules = "##.banner\nexample.com#@#.banner\n@@||other.org^$generichide\n";
+        let compiled = compile(vec![(&OTHER_LIST, rules.to_owned())], Vec::new()).unwrap();
+        let elsewhere = page_resources(&compiled.engine, "https://news.net/");
+        assert!(elsewhere.generic && elsewhere.generic_exceptions.is_empty());
+        let example = page_resources(&compiled.engine, "https://example.com/");
+        assert!(
+            example.generic_exceptions.contains(".banner"),
+            "{example:?}"
+        );
+        assert!(!page_resources(&compiled.engine, "https://other.org/").generic);
+    }
+
+    #[test]
+    fn exceptions_cover_a_site_and_its_subdomains() {
+        let sites = vec![site_of("www.YouTube.com")];
+        assert_eq!(sites, ["youtube.com"]);
+        assert!(is_excepted("youtube.com", &sites));
+        assert!(is_excepted("www.youtube.com", &sites));
+        assert!(is_excepted("m.youtube.com", &sites));
+        assert!(!is_excepted("notyoutube.com", &sites));
+        assert!(!is_excepted("youtube.com.evil.net", &sites));
+
+        let mut settings = Settings::default();
+        settings.set_site("b.org", false);
+        settings.set_site("a.org", false);
+        settings.set_site("a.org", false);
+        assert_eq!(settings.disabled_sites, ["a.org", "b.org"]);
+        settings.set_site("a.org", true);
+        assert_eq!(settings.disabled_sites, ["b.org"]);
+    }
+
+    #[test]
+    fn reads_hosts_of_web_addresses_only() {
+        assert_eq!(
+            host_of("https://www.youtube.com/watch?v=1").as_deref(),
+            Some("www.youtube.com")
+        );
+        assert_eq!(
+            host_of("http://user@Example.org:8080/").as_deref(),
+            Some("example.org")
+        );
+        assert_eq!(host_of("about:blank"), None);
+    }
+
+    #[test]
+    fn lists_are_stale_when_missing_or_a_day_old() {
+        let dir = std::env::temp_dir().join(format!("overquid-stale-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        assert!(lists_stale(&dir));
+        for list in LISTS {
+            fs::write(dir.join(format!("{}.txt", list.name)), "! list").unwrap();
+        }
+        assert!(!lists_stale(&dir));
+        let old = SystemTime::now() - MAX_AGE - Duration::from_secs(60);
+        let file = fs::File::options()
+            .write(true)
+            .open(dir.join(format!("{}.txt", LISTS[0].name)))
+            .unwrap();
+        file.set_modified(old).unwrap();
+        assert!(lists_stale(&dir));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn recognises_filter_lists() {
         assert!(looks_like_a_list("[Adblock Plus 2.0]\n! Title: EasyList"));
         assert!(looks_like_a_list("\n! Title: uBlock filters"));
@@ -390,8 +606,12 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("content-filter.json");
         assert!(!Settings::load(&path).enabled);
-        Settings { enabled: true }.save(&path).unwrap();
-        assert!(Settings::load(&path).enabled);
+        let settings = Settings {
+            enabled: true,
+            disabled_sites: vec!["example.com".into()],
+        };
+        settings.save(&path).unwrap();
+        assert_eq!(Settings::load(&path), settings);
         fs::remove_dir_all(dir).unwrap();
     }
 }
@@ -417,13 +637,19 @@ mod real_lists {
         let start = std::time::Instant::now();
         let scriptlets = load_scriptlets(Path::new("resources/ubo-scriptlets.json"));
         let compiled = compile(lists, scriptlets).unwrap();
-        let rules: Vec<serde_json::Value> = serde_json::from_str(&compiled.network_rules).unwrap();
+        let rules: Vec<serde_json::Value> = serde_json::from_str(&compiled.blocker_rules).unwrap();
         println!(
-            "{} lists, {} network rules ({} KB) in {:?}",
+            "{} lists, {} blocking rules ({} KB) in {:?}",
             compiled.lists,
             rules.len(),
-            compiled.network_rules.len() / 1024,
+            compiled.blocker_rules.len() / 1024,
             start.elapsed()
+        );
+        let none = std::collections::HashSet::new();
+        println!(
+            "generic hiding: {} selectors, {} KB",
+            compiled.generic.selectors.len(),
+            compiled.generic.style(&none).len() / 1024
         );
         let page = page_resources(&compiled.engine, "https://www.youtube.com/watch?v=x");
         println!(
