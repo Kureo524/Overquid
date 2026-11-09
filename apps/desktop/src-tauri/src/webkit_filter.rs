@@ -30,6 +30,13 @@ impl Drop for Filter {
     }
 }
 
+impl Filter {
+    /// Identity of the compiled rules, to tell whether a view already has them.
+    pub fn key(&self) -> usize {
+        self.0.as_ptr() as usize
+    }
+}
+
 /// Where compiled rules are kept.
 pub struct Store(ptr::NonNull<ffi::WebKitUserContentFilterStore>);
 

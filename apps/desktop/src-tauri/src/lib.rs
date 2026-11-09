@@ -211,10 +211,58 @@ fn set_content_filter<R: Runtime>(
     filter: State<'_, ContentFilter>,
     enabled: bool,
 ) -> Result<(), String> {
-    content_filter::Settings { enabled }.save(&filter.settings)?;
-    start_content_filter(&app, enabled);
+    let mut settings = content_filter::Settings::load(&filter.settings);
+    settings.enabled = enabled;
+    settings.save(&filter.settings)?;
+    start_content_filter(&app, if enabled { Start::On } else { Start::Off });
     Ok(())
 }
+
+/// Sites where the user switched the filter off.
+#[tauri::command]
+fn content_filter_exceptions(filter: State<'_, ContentFilter>) -> Vec<String> {
+    content_filter::Settings::load(&filter.settings).disabled_sites
+}
+
+/// Switches the filter off (`filtered: false`) or back on for the site of `host`.
+#[tauri::command]
+fn set_site_filter<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    filter: State<'_, ContentFilter>,
+    host: String,
+    filtered: bool,
+) -> Result<Vec<String>, String> {
+    let site = content_filter::site_of(&host);
+    if site.is_empty() {
+        return Err("no site".into());
+    }
+    let mut settings = content_filter::Settings::load(&filter.settings);
+    settings.set_site(&site, filtered);
+    settings.save(&filter.settings)?;
+    let sites = settings.disabled_sites;
+    let applied = sites.clone();
+    app.run_on_main_thread(move || web_panels::set_filter_exceptions(applied, &site))
+        .map_err(|error| error.to_string())?;
+    let _ = app.emit(CONTENT_FILTER_EXCEPTIONS_EVENT, &sites);
+    Ok(sites)
+}
+
+/// Sent with the sites where the filter is off, whenever they change.
+const CONTENT_FILTER_EXCEPTIONS_EVENT: &str = "content-filter-exceptions";
+
+/// What `start_content_filter` does.
+#[derive(Clone, Copy, PartialEq)]
+enum Start {
+    Off,
+    /// Switched on by the user: pages reload once the filter is ready.
+    On,
+    /// Lists refreshed in the background: pages keep going, new rules apply
+    /// to what they load next.
+    Refresh,
+}
+
+/// How often the background check looks for lists older than a day.
+const REFRESH_CHECK: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 
 fn report_content_filter<R: Runtime>(app: &tauri::AppHandle<R>, status: content_filter::Status) {
     if let Ok(mut current) = app.state::<ContentFilter>().status.lock() {
@@ -223,8 +271,9 @@ fn report_content_filter<R: Runtime>(app: &tauri::AppHandle<R>, status: content_
     let _ = app.emit(CONTENT_FILTER_EVENT, status);
 }
 
-/// Switches the filter on (lists fetched and compiled on a worker thread) or off.
-fn start_content_filter<R: Runtime>(app: &tauri::AppHandle<R>, enabled: bool) {
+/// Switches the filter on (lists fetched and compiled on a worker thread),
+/// refreshes it, or switches it off.
+fn start_content_filter<R: Runtime>(app: &tauri::AppHandle<R>, start: Start) {
     use content_filter::Status;
     use std::sync::atomic::Ordering;
 
@@ -240,12 +289,16 @@ fn start_content_filter<R: Runtime>(app: &tauri::AppHandle<R>, enabled: bool) {
     else {
         return;
     };
-    if !enabled {
+    if start == Start::Off {
         report_content_filter(app, Status::Off);
-        let _ = app.run_on_main_thread(move || web_panels::set_content_filter(None, store, |_| {}));
+        let _ = app.run_on_main_thread(move || {
+            web_panels::set_content_filter(None, store, true, |_| {});
+        });
         return;
     }
-    report_content_filter(app, Status::Loading);
+    if start == Start::On {
+        report_content_filter(app, Status::Loading);
+    }
     let cache = app
         .path()
         .app_cache_dir()
@@ -272,6 +325,10 @@ fn start_content_filter<R: Runtime>(app: &tauri::AppHandle<R>, enabled: bool) {
         }
         let compiled = match compiled {
             Ok(compiled) => compiled,
+            // A failed background refresh keeps the filter as it is.
+            Err(message) if start == Start::Refresh => {
+                return eprintln!("overquid: content filter refresh: {message}");
+            }
             Err(message) => return report_content_filter(&app, Status::Error { message }),
         };
         let on = Status::On {
@@ -283,13 +340,33 @@ fn start_content_filter<R: Runtime>(app: &tauri::AppHandle<R>, enabled: bool) {
             if !current(&handle) {
                 return;
             }
-            web_panels::set_content_filter(Some(compiled), store, move |result| {
+            let reload = start == Start::On;
+            web_panels::set_content_filter(Some(compiled), store, reload, move |result| {
                 if let Err(error) = &result {
                     eprintln!("overquid: content filter: {error}");
                 }
                 report_content_filter(&handle, on);
             });
         });
+    });
+}
+
+/// Refreshes the lists in the background once they are a day old, while the
+/// filter is on.
+fn refresh_content_filter_lists<R: Runtime>(app: tauri::AppHandle<R>) {
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(REFRESH_CHECK);
+            let filter = app.state::<ContentFilter>();
+            let on = content_filter::Settings::load(&filter.settings).enabled;
+            let cache = app
+                .path()
+                .app_cache_dir()
+                .map(|dir| content_filter::cache_dir(&dir));
+            if on && cache.is_ok_and(|cache| content_filter::lists_stale(&cache)) {
+                start_content_filter(&app, Start::Refresh);
+            }
+        }
     });
 }
 
@@ -352,13 +429,16 @@ pub fn run() {
             let settings = app.path().app_config_dir()?.join("content-filter.json");
             let enabled = content_filter::Settings::load(&settings).enabled;
             app.manage(ContentFilter {
-                settings,
+                settings: settings.clone(),
                 status: std::sync::Mutex::new(content_filter::Status::Off),
                 generation: std::sync::atomic::AtomicU64::new(0),
             });
+            let sites = content_filter::Settings::load(&settings).disabled_sites;
+            app.run_on_main_thread(move || web_panels::set_filter_exceptions(sites, ""))?;
             if enabled {
-                start_content_filter(app.handle(), true);
+                start_content_filter(app.handle(), Start::On);
             }
+            refresh_content_filter_lists(app.handle().clone());
             #[cfg(target_os = "linux")]
             quit_on_signals(app.handle());
             apply(app.handle(), command);
@@ -375,7 +455,9 @@ pub fn run() {
             web_panel,
             web_navigate,
             content_filter_status,
-            set_content_filter
+            set_content_filter,
+            content_filter_exceptions,
+            set_site_filter
         ])
         .run(tauri::generate_context!())
         .expect("error while running Overquid");

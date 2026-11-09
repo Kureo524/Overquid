@@ -104,12 +104,16 @@ pub enum Navigation {
 const PAUSE_MEDIA: &str = "document.querySelectorAll('video, audio').forEach((m) => m.pause())";
 
 #[cfg(target_os = "linux")]
-pub use linux::{install, navigate, place, set_content_filter, unload_all};
+pub use linux::{install, navigate, place, set_content_filter, set_filter_exceptions, unload_all};
+
+#[cfg(not(target_os = "linux"))]
+pub fn set_filter_exceptions(_sites: Vec<String>, _changed: &str) {}
 
 #[cfg(not(target_os = "linux"))]
 pub fn set_content_filter(
     _compiled: Option<crate::content_filter::Compiled>,
     _store: std::path::PathBuf,
+    _reload: bool,
     done: impl FnOnce(Result<(), String>) + 'static,
 ) {
     done(Err(
@@ -160,7 +164,7 @@ mod linux {
         WebsiteDataManager, WebsiteDataManagerExt,
     };
 
-    use crate::content_filter::{Compiled, page_resources};
+    use crate::content_filter::{Compiled, host_of, is_excepted, page_resources};
     use crate::webkit_filter;
 
     use super::{DataDirs, Hole, Hooks, Navigation, PAUSE_MEDIA, PageState, rounded_rectangles};
@@ -183,12 +187,22 @@ mod linux {
         static NESTED_DRAW: Cell<bool> = const { Cell::new(false) };
         /// The content filter, when switched on (ADR 0005).
         static FILTERING: RefCell<Option<Filtering>> = const { RefCell::new(None) };
+        /// Sites where the user switched the filter off.
+        static EXCEPTIONS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+        /// The blocking rules each view has (`Filter::key`), by view. Rules
+        /// are only changed when this changes: WebKit updates them
+        /// asynchronously, and a page created meanwhile would miss them.
+        static APPLIED: RefCell<Vec<(WebView, Option<usize>)>> = const { RefCell::new(Vec::new()) };
     }
 
     struct Filtering {
         engine: Rc<adblock::Engine>,
-        /// Network rules compiled by WebKit; `None` until ready.
-        network: Option<webkit_filter::Filter>,
+        generic: Rc<crate::content_filter::Generic>,
+        /// Generic hiding as one style sheet, shared by every page that does
+        /// not unhide some of it.
+        generic_sheet: Option<UserStyleSheet>,
+        /// Blocking rules compiled by WebKit; `None` until ready.
+        blocker: Option<webkit_filter::Filter>,
     }
 
     struct Placed {
@@ -261,6 +275,8 @@ mod linux {
             let view = state.views.entry(id.to_owned()).or_insert_with(|| {
                 let view = create(spec, &dirs);
                 watch(&view, id, hooks);
+                // Blocking rules before the first page, not at its start.
+                filter_page(&view);
                 view.load_uri(&spec.url);
                 state.overlay.add_overlay(&view);
                 view
@@ -547,38 +563,54 @@ mod linux {
                 view.load_html(CRASHED_PAGE, None);
             }
         });
-        // Content filter: each page gets the scriptlets and hiding rules of
-        // its site before its own scripts run.
+        // Content filter: each page gets the blocking rules, scriptlets and
+        // hiding rules of its site (or none, for an exception) before its own
+        // scripts run.
         view.connect_load_changed(|view, event| {
             if matches!(event, LoadEvent::Started | LoadEvent::Redirected) {
                 filter_page(view);
             }
         });
-        if let Some(manager) = view.user_content_manager() {
-            FILTERING.with(|filtering| {
-                if let Some(network) = filtering.borrow().as_ref().and_then(|f| f.network.as_ref())
-                {
-                    webkit_filter::add(&manager, network);
-                }
-            });
-        }
         view
     }
 
-    /// Replaces the page scripts and styles of `view` with those of the page it
-    /// is loading (none when the filter is off).
+    /// Sets up `view`'s content filter for the page it is loading: blocking
+    /// rules, then the site's scriptlets and hiding rules. Nothing when the
+    /// filter is off, or off for this site.
     fn filter_page(view: &WebView) {
         let Some(manager) = view.user_content_manager() else {
             return;
         };
         manager.remove_all_scripts();
         manager.remove_all_style_sheets();
-        let engine =
-            FILTERING.with(|filtering| filtering.borrow().as_ref().map(|f| f.engine.clone()));
-        let (Some(engine), Some(uri)) = (engine, view.uri()) else {
+        let filtering = FILTERING.with(|filtering| {
+            filtering.borrow().as_ref().map(|f| {
+                (
+                    (f.engine.clone(), f.generic.clone(), f.generic_sheet.clone()),
+                    f.blocker.clone(),
+                )
+            })
+        });
+        let uri = view.uri().unwrap_or_default();
+        let excepted = host_of(&uri)
+            .is_some_and(|host| EXCEPTIONS.with(|sites| is_excepted(&host, &sites.borrow())));
+        let (engine, blocker) = match filtering {
+            Some((engine, blocker)) if !excepted => (Some(engine), blocker),
+            _ => (None, None),
+        };
+        set_blocker(view, &manager, blocker.as_ref());
+        let Some((engine, generic, generic_sheet)) = engine else {
             return;
         };
         let page = page_resources(&engine, &uri);
+        if page.generic {
+            match generic_sheet {
+                Some(sheet) if page.generic_exceptions.is_empty() => {
+                    manager.add_style_sheet(&sheet);
+                }
+                _ => manager.add_style_sheet(&user_style(&generic.style(&page.generic_exceptions))),
+            }
+        }
         if !page.script.is_empty() {
             manager.add_script(&UserScript::new(
                 &page.script,
@@ -589,92 +621,148 @@ mod linux {
             ));
         }
         if !page.style.is_empty() {
-            manager.add_style_sheet(&UserStyleSheet::new(
-                &page.style,
-                UserContentInjectedFrames::TopFrame,
-                UserStyleLevel::User,
-                &[],
-                &[],
-            ));
+            manager.add_style_sheet(&user_style(&page.style));
         }
     }
 
-    /// Switches the content filter on with `compiled`, or off with `None`, for
-    /// every web panel, then reloads them. Network rules are compiled by WebKit
-    /// into `store` once (slow the first time), then loaded from there.
+    fn user_style(css: &str) -> UserStyleSheet {
+        UserStyleSheet::new(
+            css,
+            UserContentInjectedFrames::TopFrame,
+            UserStyleLevel::User,
+            &[],
+            &[],
+        )
+    }
+
+    /// Gives `view` the blocking rules `blocker`, unless it already has them.
+    fn set_blocker(
+        view: &WebView,
+        manager: &webkit2gtk::UserContentManager,
+        blocker: Option<&webkit_filter::Filter>,
+    ) {
+        let wanted = blocker.map(webkit_filter::Filter::key);
+        let changed = APPLIED.with(|applied| {
+            let mut applied = applied.borrow_mut();
+            match applied.iter_mut().find(|(known, _)| known == view) {
+                Some((_, current)) if *current == wanted => false,
+                Some((_, current)) => {
+                    *current = wanted;
+                    true
+                }
+                None => {
+                    applied.push((view.clone(), wanted));
+                    true
+                }
+            }
+        });
+        if changed {
+            webkit_filter::remove_all(manager);
+            if let Some(blocker) = blocker {
+                webkit_filter::add(manager, blocker);
+            }
+        }
+    }
+
+    /// Sites where the filter is off. Pages of `changed` are reloaded so the
+    /// change shows at once.
+    pub fn set_filter_exceptions(sites: Vec<String>, changed: &str) {
+        EXCEPTIONS.with(|known| *known.borrow_mut() = sites);
+        for view in all_views() {
+            let on_site = view
+                .uri()
+                .and_then(|uri| host_of(&uri))
+                .is_some_and(|host| is_excepted(&host, &[changed.to_owned()]));
+            if on_site {
+                filter_page(&view);
+                view.reload();
+            }
+        }
+    }
+
+    /// Switches the content filter on with `compiled`, or off with `None`.
+    /// Blocking rules are compiled by WebKit into `store` once (slow the first
+    /// time), then loaded from there. `reload` reloads every web panel so the
+    /// change shows at once; a background refresh of the lists does not.
     pub fn set_content_filter(
         compiled: Option<Compiled>,
         store: std::path::PathBuf,
+        reload: bool,
         done: impl FnOnce(Result<(), String>) + 'static,
     ) {
         let Some(compiled) = compiled else {
             FILTERING.with(|filtering| *filtering.borrow_mut() = None);
-            for view in all_views() {
-                if let Some(manager) = view.user_content_manager() {
-                    webkit_filter::remove_all(&manager);
-                }
-                filter_page(&view);
-                view.reload();
-            }
+            refilter(reload);
             done(Ok(()));
             return;
         };
         let Compiled {
             engine,
-            network_rules,
+            blocker_rules,
+            generic,
             id,
             ..
         } = compiled;
+        let generic_sheet = user_style(&generic.style(&Default::default()));
+        // Until the new blocking rules are ready, pages keep the previous ones.
+        let previous = FILTERING.with(|filtering| {
+            filtering
+                .borrow()
+                .as_ref()
+                .and_then(|filtering| filtering.blocker.clone())
+        });
         FILTERING.with(|filtering| {
             *filtering.borrow_mut() = Some(Filtering {
                 engine: Rc::new(engine),
-                network: None,
+                generic: Rc::new(generic),
+                generic_sheet: Some(generic_sheet),
+                blocker: previous,
             });
         });
         let _ = std::fs::create_dir_all(&store);
         let Some(store) = webkit_filter::Store::new(&store) else {
-            apply_network(None);
+            refilter(reload);
             done(Err("cannot open the content filter store".into()));
             return;
         };
         let store = Rc::new(store);
         let again = store.clone();
+        let ready = move |blocker: Option<webkit_filter::Filter>| {
+            FILTERING.with(|filtering| {
+                if let Some(filtering) = filtering.borrow_mut().as_mut() {
+                    filtering.blocker = blocker;
+                }
+            });
+            refilter(reload);
+        };
         store.load(&id.clone(), move |loaded| match loaded {
-            Ok(filter) => {
-                apply_network(Some(filter));
+            Ok(blocker) => {
+                ready(Some(blocker));
                 done(Ok(()));
             }
             // First time with these rules: compile them.
-            Err(_) => again.save(&id, &network_rules, move |saved| match saved {
-                Ok(filter) => {
-                    apply_network(Some(filter));
+            Err(_) => again.save(&id, &blocker_rules, move |saved| match saved {
+                Ok(blocker) => {
+                    ready(Some(blocker));
                     done(Ok(()));
                 }
                 Err(error) => {
-                    // Page rules (scriptlets, hiding) still apply.
-                    apply_network(None);
-                    done(Err(format!("network rules: {error}")));
+                    // Scriptlets and site rules still apply.
+                    ready(None);
+                    done(Err(format!("blocking rules: {error}")));
                 }
             }),
         });
     }
 
-    /// Gives every view the network rules (if any) and reloads it, so the
-    /// whole filter applies to the page on screen.
-    fn apply_network(filter: Option<webkit_filter::Filter>) {
-        FILTERING.with(|filtering| {
-            if let Some(filtering) = filtering.borrow_mut().as_mut() {
-                filtering.network = filter.clone();
-            }
-        });
+    /// Sets every view's filter up again for the page it shows; with `reload`,
+    /// reloads it so the page is filtered from its start.
+    fn refilter(reload: bool) {
         for view in all_views() {
-            if let Some(manager) = view.user_content_manager() {
-                webkit_filter::remove_all(&manager);
-                if let Some(filter) = &filter {
-                    webkit_filter::add(&manager, filter);
-                }
+            filter_page(&view);
+            if reload {
+                view.reload();
             }
-            view.reload();
         }
     }
 

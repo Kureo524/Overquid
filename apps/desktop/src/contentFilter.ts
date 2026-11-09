@@ -43,3 +43,44 @@ export function useContentFilter(): FilterStatus {
   }, []);
   return status;
 }
+
+/** The site an exception is kept for: the host, without a leading `www.` (`content_filter::site_of`). */
+export function siteOf(url: string): string | null {
+  try {
+    const { protocol, hostname } = new URL(url);
+    if (protocol !== 'https:' && protocol !== 'http:') return null;
+    return (
+      hostname
+        .replace(/\.$/, '')
+        .toLowerCase()
+        .replace(/^www\./, '') || null
+    );
+  } catch {
+    return null;
+  }
+}
+
+/** Whether the filter is off on `site`: an exception for it or a parent domain. */
+export const isExcepted = (site: string, exceptions: string[]) =>
+  exceptions.some((known) => site === known || site.endsWith(`.${known}`));
+
+/** Sites where the user switched the filter off. */
+export function useFilterExceptions(): string[] {
+  const [sites, setSites] = useState<string[]>([]);
+  useEffect(() => {
+    let active = true;
+    const stop = listen<string[]>('content-filter-exceptions', (event) => setSites(event.payload));
+    invoke<string[]>('content_filter_exceptions').then(
+      (current) => active && setSites(current),
+      (error: unknown) => console.error('Cannot read the filter exceptions:', error),
+    );
+    return () => {
+      active = false;
+      void stop.then((unlisten) => unlisten());
+    };
+  }, []);
+  return sites;
+}
+
+export const setSiteFilter = (site: string, filtered: boolean) =>
+  invoke<string[]>('set_site_filter', { host: site, filtered });
