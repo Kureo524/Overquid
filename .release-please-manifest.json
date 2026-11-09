@@ -1,0 +1,5 @@
+{
+  ".": "0.0.0",
+  "packages/sdk": "0.1.0",
+  "packages/create-overlay-plugin": "0.0.0"
+}

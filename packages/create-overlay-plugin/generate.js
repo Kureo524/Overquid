@@ -4,8 +4,11 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-/** The SDK release new plugins depend on, outside the Overquid monorepo. */
-export const SDK_RANGE = '^0.1.0';
+/**
+ * The SDK releases new plugins accept outside the Overquid monorepo: the
+ * latest of the current major version.
+ */
+export const SDK_RANGE = '^0';
 
 const TEMPLATE = join(dirname(fileURLToPath(import.meta.url)), 'template');
 
