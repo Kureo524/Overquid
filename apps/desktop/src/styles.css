@@ -156,6 +156,14 @@ kbd {
   background: transparent;
 }
 
+.web-slot {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  border-radius: 10px;
+  background: var(--canvas, rgba(11, 12, 17, 0.8));
+}
+
 .big-number {
   margin: 0;
   font: 600 26px/1.2 var(--font-num);

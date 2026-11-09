@@ -36,7 +36,7 @@ export function PluginFrame({ plugin, height, visible }: PluginFrameProps) {
       ref={ref}
       className="plugin-frame"
       title={plugin.name}
-      src={pluginUrl(plugin.id, plugin.entry)}
+      src={pluginUrl(plugin.id, plugin.entry ?? '')}
       sandbox="allow-scripts"
       style={{ height }}
       onLoad={onLoad}

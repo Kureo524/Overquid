@@ -5,6 +5,7 @@ mod overlay;
 mod plugin_storage;
 mod plugins;
 mod state;
+mod web_panels;
 
 use tauri::{Manager, Runtime, State, WebviewWindow};
 
@@ -64,6 +65,37 @@ fn plugin_call<R: Runtime>(
     let (_, manifest) = plugins::find(&plugin_roots(&app), &plugin_id)
         .ok_or_else(|| format!("unknown plugin '{plugin_id}'"))?;
     plugins::call(&manifest, &storage, &method, &args)
+}
+
+/// Places a web plugin's native view over `rect` (CSS pixels in the overlay
+/// window), or hides it when `rect` is `None` (ADR 0004).
+#[tauri::command(async)]
+fn web_panel<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    plugin_id: String,
+    rect: Option<Rect>,
+) -> Result<(), String> {
+    let (_, manifest) = plugins::find(&plugin_roots(&app), &plugin_id)
+        .ok_or_else(|| format!("unknown plugin '{plugin_id}'"))?;
+    let spec = manifest
+        .web
+        .ok_or_else(|| format!("'{plugin_id}' is not a web plugin"))?;
+    let base = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("web")
+        .join(&plugin_id);
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let dirs = web_panels::DataDirs {
+            data: base.join("data"),
+            cache: base.join("cache"),
+        };
+        let _ = tx.send(web_panels::place(&plugin_id, &spec, dirs, rect));
+    })
+    .map_err(|error| error.to_string())?;
+    rx.recv().map_err(|error| error.to_string())?
 }
 
 #[tauri::command(async)]
@@ -146,7 +178,8 @@ pub fn run() {
             load_layout,
             save_layout,
             plugin_call,
-            list_plugins
+            list_plugins,
+            web_panel
         ])
         .run(tauri::generate_context!())
         .expect("error while running Overquid");

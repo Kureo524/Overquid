@@ -18,6 +18,7 @@ import {
 } from './overlay';
 import { Panel } from './Panel';
 import { PluginFrame } from './PluginFrame';
+import { WebSlot } from './WebSlot';
 import { listPlugins, startBroker, type PluginManifest } from './plugins';
 
 const modeLabel: Record<OverlayMode, string> = {
@@ -209,7 +210,16 @@ export function App() {
               hidden={!visible(plugin.id)}
               {...panelProps(plugin.id)}
             >
-              <PluginFrame plugin={plugin} height={height} visible={onScreen(plugin.id)} />
+              {plugin.web ? (
+                <WebSlot
+                  pluginId={plugin.id}
+                  name={plugin.name}
+                  height={height}
+                  visible={onScreen(plugin.id)}
+                />
+              ) : (
+                <PluginFrame plugin={plugin} height={height} visible={onScreen(plugin.id)} />
+              )}
             </Panel>
           );
         })}

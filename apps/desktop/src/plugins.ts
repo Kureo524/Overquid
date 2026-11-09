@@ -6,7 +6,10 @@ export interface PluginManifest {
   id: string;
   name: string;
   version: string;
-  entry: string;
+  /** Iframe plugin: its entry file. Exactly one of `entry` and `web`. */
+  entry?: string;
+  /** Web panel: an official web app shown in a native view (ADR 0004). */
+  web?: { url: string; hosts: string[]; pauseOnHide: boolean };
   panel: {
     defaultSize?: [number, number] | null;
     position?: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'center' | null;
