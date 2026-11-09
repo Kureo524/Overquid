@@ -290,3 +290,85 @@ kbd {
   color: var(--accent);
   text-align: center;
 }
+
+.menu__item:disabled {
+  opacity: 0.4;
+  cursor: default;
+  background: transparent;
+}
+
+.menu__empty {
+  margin: 0;
+  padding: 8px 10px;
+  color: var(--text-3);
+}
+
+.overlay-bar {
+  /* Centred without a transform: web panels measure it to cut it out. */
+  position: absolute;
+  top: 12px;
+  right: 0;
+  left: 0;
+  display: flex;
+  width: fit-content;
+  margin: 0 auto;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 32px);
+  height: 40px;
+  padding: 0 6px;
+  border-radius: 14px;
+}
+
+.overlay-bar__tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.overlay-bar__tab,
+.overlay-bar__add {
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.overlay-bar__tab:hover,
+.overlay-bar__add:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.overlay-bar__tab[aria-selected='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.overlay-bar__rename {
+  width: 120px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  outline: none;
+}
+
+.overlay-bar__divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border-strong);
+}

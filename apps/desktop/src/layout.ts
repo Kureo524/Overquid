@@ -1,5 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
-
 /** Top-left corner of a panel, in CSS pixels. */
 export interface Position {
   x: number;
@@ -37,6 +35,7 @@ export interface PanelLayout {
 
 export type Layout = Record<string, PanelLayout>;
 
+/** Format of a single layout: before overlays (ADR 0006), and inside each overlay. */
 export const LAYOUT_VERSION = 1;
 
 type Anchor = 'start' | 'center' | 'end';
@@ -153,12 +152,6 @@ export function migrateLayout(layout: Layout): Layout {
 }
 
 export const serializeLayout = (layout: Layout) => ({ version: LAYOUT_VERSION, panels: layout });
-
-export const loadLayout = async (): Promise<Layout> =>
-  migrateLayout(parseLayout(await invoke<unknown>('load_layout')));
-
-export const saveLayout = (layout: Layout) =>
-  invoke('save_layout', { layout: serializeLayout(layout) });
 
 /** Panels kept on top stay above this offset, in their own order. */
 const ON_TOP = 1_000_000;

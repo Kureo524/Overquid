@@ -465,6 +465,9 @@ mod linux {
         }
         let context = WebContext::with_website_data_manager(&manager);
         let view = WebView::with_context(&context);
+        // Shown only by `place`: showing the overlay window (Tauri's `show`
+        // is GTK's `show_all`) must not bring back hidden panels.
+        view.set_no_show_all(true);
         if let Some(settings) = WebViewExt::settings(&view) {
             settings.set_enable_developer_extras(false);
             settings.set_javascript_can_open_windows_automatically(false);

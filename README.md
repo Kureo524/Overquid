@@ -101,6 +101,9 @@ Bind `overquid toggle` to a hotkey in your desktop. On Hyprland (Lua config):
 hl.bind("ALT + SHIFT + X", hl.dsp.exec_cmd("overquid toggle"))
 ```
 
+Overlays (the tabs at the top of the overlay) can be switched from hotkeys too: `overquid next`, `overquid prev`,
+`overquid switch NAME`.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for branches, commit conventions and the PR flow.
 
 ## License

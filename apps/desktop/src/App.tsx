@@ -3,14 +3,27 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   isInFront,
   layerOf,
-  loadLayout,
   restack,
-  saveLayout,
   type Layout,
   type PanelLayout,
   type Placement,
   type Size,
 } from './layout';
+import {
+  activeOverlay,
+  addPanels,
+  createOverlay,
+  cycle,
+  deleteOverlay,
+  loadOverlays,
+  removePanel,
+  renameOverlay,
+  saveOverlays,
+  switchByName,
+  updatePanel,
+  type Overlays,
+} from './overlays';
+import { OverlayBar } from './OverlayBar';
 import {
   regionsOf,
   releaseKeyboard,
@@ -42,9 +55,11 @@ const builtIn: Record<string, PanelLayout> = {
 };
 
 const MARGIN = 16;
+/** Panels placed at the top start below the overlay bar (top 12, 40 high). */
+const BELOW_BAR = 64;
 const atPosition: Record<NonNullable<PluginManifest['panel']['position']>, Placement> = {
-  'top-left': { h: 'left', v: 'top', dx: MARGIN, dy: MARGIN },
-  'top-right': { h: 'right', v: 'top', dx: MARGIN, dy: MARGIN },
+  'top-left': { h: 'left', v: 'top', dx: MARGIN, dy: BELOW_BAR },
+  'top-right': { h: 'right', v: 'top', dx: MARGIN, dy: BELOW_BAR },
   'bottom-left': { h: 'left', v: 'bottom', dx: MARGIN, dy: MARGIN },
   'bottom-right': { h: 'right', v: 'bottom', dx: MARGIN, dy: MARGIN },
   center: { h: 'center', v: 'center', dx: 0, dy: 0 },
@@ -60,9 +75,11 @@ function defaultLayout(id: PanelId, plugins: PluginManifest[]): PanelLayout {
     plugins.findIndex((plugin) => plugin.id === id),
   );
   const position = plugins[index]?.panel.position;
-  const offset = MARGIN + 32 * index;
+  const offset = 32 * index;
   return {
-    placement: position ? atPosition[position] : { h: 'left', v: 'top', dx: offset, dy: offset },
+    placement: position
+      ? atPosition[position]
+      : { h: 'left', v: 'top', dx: MARGIN + offset, dy: BELOW_BAR + offset },
     pinned: false,
   };
 }
@@ -102,19 +119,40 @@ function useViewport(): Size {
   return viewport;
 }
 
-/** The saved layout (null until loaded) and a setter that also saves it. */
-function useLayout(
+/** What `overquid next|prev|switch NAME` sends (`cli::OverlaySwitch`). */
+type OverlaySwitch = { kind: 'next' } | { kind: 'prev' } | { kind: 'switch'; name: string };
+
+/**
+ * The saved overlays (null until loaded) and a setter that also saves them.
+ * A first run, or a layout saved before overlays existed, fills the first
+ * overlay with every panel once the plugins are listed.
+ */
+function useOverlays(
+  plugins: PluginManifest[] | null,
   defaults: (id: PanelId) => PanelLayout,
-): [Layout | null, (id: PanelId, change: Partial<PanelLayout>) => void] {
-  const [layout, setLayout] = useState<Layout | null>(null);
+): [Overlays | null, (next: Overlays) => void] {
+  const [overlays, setOverlays] = useState<Overlays | null>(null);
+  const [fill, setFill] = useState(false);
+
+  const commit = (next: Overlays) => {
+    setOverlays(next);
+    saveOverlays(next).catch((error: unknown) => console.error('Cannot save the overlays:', error));
+  };
 
   useEffect(() => {
     let active = true;
-    loadLayout().then(
-      (saved) => active && setLayout(saved),
+    loadOverlays().then(
+      (loaded) => {
+        if (!active) return;
+        setOverlays(loaded.overlays);
+        setFill(loaded.fillWithInstalled);
+      },
       (error: unknown) => {
-        console.error('Cannot load the panel layout:', error);
-        if (active) setLayout({});
+        console.error('Cannot load the overlays:', error);
+        if (active) {
+          setOverlays({ active: 'main', overlays: [{ id: 'main', name: 'Main', panels: {} }] });
+          setFill(true);
+        }
       },
     );
     return () => {
@@ -122,16 +160,24 @@ function useLayout(
     };
   }, []);
 
-  const update = (id: PanelId, change: Partial<PanelLayout>) => {
-    if (!layout) return;
-    const next = { ...layout, [id]: { ...(layout[id] ?? defaults(id)), ...change } };
-    setLayout(next);
-    saveLayout(next).catch((error: unknown) =>
-      console.error('Cannot save the panel layout:', error),
-    );
-  };
+  useEffect(() => {
+    if (!fill || !overlays || !plugins) return;
+    setFill(false);
+    const ids = ['welcome', ...plugins.map((plugin) => plugin.id)];
+    commit(addPanels(overlays, Object.fromEntries(ids.map((id) => [id, defaults(id)]))));
+  });
 
-  return [layout, update];
+  return [fill ? null : overlays, commit];
+}
+
+/** `overquid next|prev|switch NAME`, relayed by the core. */
+function useOverlaySwitches(onSwitch: (request: OverlaySwitch) => void) {
+  const ref = useRef(onSwitch);
+  ref.current = onSwitch;
+  useEffect(() => {
+    const stop = listen<OverlaySwitch>('overlay-switch', (event) => ref.current(event.payload));
+    return () => void stop.then((unlisten) => unlisten());
+  }, []);
 }
 
 export function App() {
@@ -140,17 +186,36 @@ export function App() {
   const listed = usePlugins();
   const plugins = listed ?? [];
   const defaults = (id: PanelId) => defaultLayout(id, plugins);
-  const [layout, updateLayout] = useLayout(defaults);
+  const [overlays, commit] = useOverlays(listed, defaults);
+  const layout = overlays ? activeOverlay(overlays).panels : null;
   const lastRegions = useRef<Rect[] | null>(null);
   const restorePending = useRef(true);
 
+  const updateLayout = (id: PanelId, change: Partial<PanelLayout>) => {
+    if (overlays) commit(updatePanel(overlays, id, change, defaults(id)));
+  };
+  // Changing overlays changes the pinned panels: bring the new ones on
+  // screen (or hide everything) as at startup, without summoning.
+  const changeOverlays = (next: Overlays) => {
+    if (overlays && next.active !== overlays.active) restorePending.current = true;
+    commit(next);
+  };
+  useOverlaySwitches((request) => {
+    if (!overlays) return;
+    if (request.kind === 'next') changeOverlays(cycle(overlays, 1));
+    else if (request.kind === 'prev') changeOverlays(cycle(overlays, -1));
+    else changeOverlays(switchByName(overlays, request.name));
+  });
+
+  const inOverlay = (id: PanelId) => layout !== null && id in layout;
   const panel = (id: PanelId) => layout?.[id] ?? defaults(id);
   const summoned = visibility === 'summoned';
   // Pinned panels stay rendered while hidden (the window is unmapped then):
   // their rectangles are needed to bring them back at startup.
-  const visible = (id: PanelId) => layout !== null && (summoned || panel(id).pinned);
+  const visible = (id: PanelId) => inOverlay(id) && (summoned || panel(id).pinned);
   // What the user actually sees (the window is unmapped while hidden).
-  const onScreen = (id: PanelId) => summoned || (visibility === 'pinned' && panel(id).pinned);
+  const onScreen = (id: PanelId) =>
+    inOverlay(id) && (summoned || (visibility === 'pinned' && panel(id).pinned));
 
   // Tell the core where the pinned panels are: in pinned mode they are the
   // only areas that take clicks. The first report after loading the layout
@@ -179,11 +244,8 @@ export function App() {
 
   // A pinned panel gives the keyboard back as soon as the pointer leaves it.
   const onLeave = summoned ? undefined : () => void releaseKeyboard();
-  // The full layout, defaults included: stacking compares every panel.
-  const stack = (): Layout =>
-    Object.fromEntries(
-      ['welcome', ...plugins.map((plugin) => plugin.id)].map((id) => [id, panel(id)]),
-    );
+  // The panels of the active overlay: stacking compares them.
+  const stack = (): Layout => layout ?? {};
   const raise = (id: PanelId) => {
     const all = stack();
     if (!isInFront(all, id)) updateLayout(id, { z: restack(all, id, 'front') });
@@ -212,10 +274,37 @@ export function App() {
         updateLayout(id, { z: restack(stack(), id, action) });
       }
     },
+    onClose: () => {
+      if (overlays) commit(removePanel(overlays, id));
+    },
   });
+
+  const panelNames: { id: PanelId; name: string }[] = [
+    { id: 'welcome', name: 'Overquid' },
+    ...plugins.map((plugin) => ({ id: plugin.id, name: plugin.name })),
+  ];
 
   return (
     <main className={summoned ? 'stage stage--summoned' : 'stage'}>
+      {summoned && overlays && (
+        <OverlayBar
+          overlays={overlays.overlays}
+          active={overlays.active}
+          addable={panelNames.filter((entry) => !inOverlay(entry.id))}
+          onSwitch={(id) => changeOverlays({ ...overlays, active: id })}
+          onCreate={() => changeOverlays(createOverlay(overlays))}
+          onRename={(id, name) => commit(renameOverlay(overlays, id, name))}
+          onDelete={(id) => changeOverlays(deleteOverlay(overlays, id))}
+          onAddPanel={(id) => {
+            // In front of the panels already there.
+            const z =
+              Object.keys(stack()).length > 0
+                ? restack({ ...stack(), [id]: defaults(id) }, id, 'front')
+                : 0;
+            commit(addPanels(overlays, { [id]: { ...defaults(id), z } }));
+          }}
+        />
+      )}
       {visible('welcome') && (
         <Panel
           title="Overquid"
@@ -238,7 +327,7 @@ export function App() {
       )}
       {/* Plugin panels stay loaded while hidden, so plugins keep their state
           and get onHide; they are only made invisible. */}
-      {layout !== null &&
+      {overlays !== null &&
         plugins.map((plugin) => {
           const [width, height] = plugin.panel.defaultSize ?? DEFAULT_PLUGIN_SIZE;
           const size = panel(plugin.id).size ?? { width, height };
