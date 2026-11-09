@@ -165,7 +165,7 @@ pub fn is_valid_id(id: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '-' | '_'))
 }
 
-/// A network entry is a bare host name (`api.example.com`), nothing else.
+/// A host name such as `api.example.com`, nothing else.
 fn is_valid_domain(domain: &str) -> bool {
     domain.contains('.')
         && !domain.starts_with('.')
@@ -447,13 +447,35 @@ pub fn serve_from(roots: &[PathBuf], request_path: &str) -> Response<Cow<'static
     }
 }
 
-/// CSP of a plugin document: its own files, and the network domains it declared.
+/// A network entry is a host name, optionally with a port or `*` for any port
+/// (`api.example.com`, `example.com:8443`, `archipelago.gg:*`). It stays a CSP
+/// source expression once checked: `None` for anything else.
+fn network_source(entry: &str) -> Option<&str> {
+    let (host, port) = match entry.split_once(':') {
+        None => (entry, None),
+        Some((host, port)) => (host, Some(port)),
+    };
+    let port_ok = match port {
+        None | Some("*") => true,
+        // Canonical numbers only: `8443`, not `08443` or `+8443`.
+        Some(port) => {
+            port.bytes().all(|b| b.is_ascii_digit())
+                && !port.starts_with('0')
+                && port.parse::<u16>().is_ok()
+        }
+    };
+    (is_valid_domain(host) && port_ok).then_some(entry)
+}
+
+/// CSP of a plugin document: its own files, and the network domains it
+/// declared, over `https` and secure WebSockets. Plain `http` and `ws` stay
+/// blocked.
 pub fn content_security_policy(id: &str, network: &[String]) -> String {
     let own = format!("{SCHEME}://localhost/{id}/");
     let connect: Vec<String> = network
         .iter()
-        .filter(|domain| is_valid_domain(domain))
-        .map(|domain| format!("https://{domain}"))
+        .filter_map(|entry| network_source(entry))
+        .flat_map(|source| [format!("https://{source}"), format!("wss://{source}")])
         .collect();
     let connect = if connect.is_empty() {
         "'none'".to_owned()
@@ -586,10 +608,35 @@ mod tests {
                 "*.evil.com".into(),
             ],
         );
-        assert!(csp.contains("connect-src https://api.example.com;"));
+        assert!(csp.contains("connect-src https://api.example.com wss://api.example.com;"));
         assert!(!csp.contains("evil"));
         assert!(csp.contains("script-src overquid-plugin://localhost/com.example.notes/;"));
         assert!(content_security_policy("a.b", &[]).contains("connect-src 'none'"));
+    }
+
+    #[test]
+    fn network_entries_may_carry_a_port() {
+        let csp = content_security_policy(
+            "a.b",
+            &[
+                "archipelago.gg:*".into(),
+                "example.com:8443".into(),
+                "port.zero:0".into(),
+                "leading.zero:0443".into(),
+                "too.big:65536".into(),
+                "sign.ed:+443".into(),
+                "no.port:".into(),
+                "two.ports:1:2".into(),
+                "path.example.com/x".into(),
+            ],
+        );
+        assert!(csp.contains(
+            "connect-src https://archipelago.gg:* wss://archipelago.gg:* \
+             https://example.com:8443 wss://example.com:8443;"
+        ));
+        for rejected in ["zero", "big", "sign", "no.port", "two", "path"] {
+            assert!(!csp.contains(rejected), "{rejected}");
+        }
     }
 
     #[test]
