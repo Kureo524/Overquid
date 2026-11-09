@@ -415,7 +415,8 @@ mod real_lists {
             })
             .collect::<Vec<_>>();
         let start = std::time::Instant::now();
-        let compiled = compile(lists, Vec::new()).unwrap();
+        let scriptlets = load_scriptlets(Path::new("resources/ubo-scriptlets.json"));
+        let compiled = compile(lists, scriptlets).unwrap();
         let rules: Vec<serde_json::Value> = serde_json::from_str(&compiled.network_rules).unwrap();
         println!(
             "{} lists, {} network rules ({} KB) in {:?}",

@@ -101,6 +101,12 @@ Bind `overquid toggle` to a hotkey in your desktop. On Hyprland (Lua config):
 hl.bind("ALT + SHIFT + X", hl.dsp.exec_cmd("overquid toggle"))
 ```
 
+The shield in the overlay bar blocks ads and trackers in web panels (off by default): Brave's engine
+([adblock-rust](https://github.com/brave/adblock-rust)) with the lists uBlock Origin uses by default, downloaded and
+refreshed daily. Its scriptlets (what removes YouTube's ads) are built from
+[uBlock Origin](https://github.com/gorhill/uBlock) (GPL-3.0) at build time and shipped as a separate data file; set
+`OVERQUID_SKIP_SCRIPTLETS=1` to build without them.
+
 Overlays (the tabs at the top of the overlay) can be switched from hotkeys too: `overquid next`, `overquid prev`,
 `overquid switch NAME`.
 
