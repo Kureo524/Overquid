@@ -273,12 +273,71 @@ pub fn host_allowed(host: &str, patterns: &[String]) -> bool {
 
 /// Runs a call relayed by the host for `manifest`'s plugin, after checking it
 /// against the manifest's permissions.
+/// What a plugin call may act on beyond its own manifest.
+pub struct Host<'a> {
+    pub storage: &'a crate::plugin_storage::PluginStorage,
+    /// Shows a desktop notification (title, body).
+    pub notify: &'a dyn Fn(&str, &str) -> Result<(), String>,
+    pub limiter: &'a RateLimiter,
+}
+
+/// At most `max` events per `window` for each plugin (notifications).
+pub struct RateLimiter {
+    max: usize,
+    window: std::time::Duration,
+    recent: std::sync::Mutex<std::collections::HashMap<String, Vec<std::time::Instant>>>,
+}
+
+impl RateLimiter {
+    pub fn new(max: usize, window: std::time::Duration) -> Self {
+        RateLimiter {
+            max,
+            window,
+            recent: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// Records an event for `id` at `now`, if it is still allowed.
+    pub fn allow(&self, id: &str, now: std::time::Instant) -> bool {
+        let Ok(mut recent) = self.recent.lock() else {
+            return false;
+        };
+        let times = recent.entry(id.to_owned()).or_default();
+        times.retain(|time| now.saturating_duration_since(*time) < self.window);
+        if times.len() >= self.max {
+            return false;
+        }
+        times.push(now);
+        true
+    }
+}
+
+/// An optional string argument, trimmed, at most `max` characters long.
+fn text_arg(args: &serde_json::Value, name: &str, max: usize) -> Result<Option<String>, String> {
+    match args.get(name) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(text)) => {
+            let text = text.trim();
+            if text.chars().count() > max {
+                return Err(format!("'{name}' is longer than {max} characters"));
+            }
+            Ok(Some(text.to_owned()))
+        }
+        Some(_) => Err(format!("'{name}' must be a string")),
+    }
+}
+
+/// Longest notification title and body a plugin may send, in characters.
+const MAX_TITLE: usize = 80;
+const MAX_BODY: usize = 300;
+
 pub fn call(
     manifest: &Manifest,
-    storage: &crate::plugin_storage::PluginStorage,
+    host: &Host<'_>,
     method: &str,
     args: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
+    let storage = host.storage;
     use serde_json::Value;
 
     let required = match method {
@@ -286,6 +345,7 @@ pub fn call(
         "storage.get" | "storage.set" | "storage.remove" | "storage.keys" => {
             Some(Permission::Storage)
         }
+        "notify" => Some(Permission::Notifications),
         other => return Err(format!("unknown method '{other}'")),
     };
     if let Some(permission) = required
@@ -318,6 +378,18 @@ pub fn call(
         }
         "storage.remove" => storage.remove(id, key()?).map(|()| Value::Null),
         "storage.keys" => Ok(serde_json::json!(storage.keys(id)?)),
+        "notify" => {
+            let title = text_arg(args, "title", MAX_TITLE)?
+                .filter(|title| !title.is_empty())
+                .ok_or("'notify' needs a 'title'")?;
+            let body = text_arg(args, "body", MAX_BODY)?.unwrap_or_default();
+            if !host.limiter.allow(id, std::time::Instant::now()) {
+                return Err("too many notifications: wait a minute".into());
+            }
+            // The plugin's name always heads the title: no plugin can pass
+            // for another one, or for the system.
+            (host.notify)(&format!("{} · {title}", manifest.name), &body).map(|()| Value::Null)
+        }
         _ => unreachable!("methods are matched above"),
     }
 }
@@ -540,6 +612,13 @@ mod tests {
 
         let root = fixture("calls");
         let storage = PluginStorage::new(&root.join("data"));
+        let notify = |_: &str, _: &str| Ok(());
+        let limiter = RateLimiter::new(5, std::time::Duration::from_secs(60));
+        let storage = Host {
+            storage: &storage,
+            notify: &notify,
+            limiter: &limiter,
+        };
         let mut manifest = load_manifest(&root, "com.example.notes").unwrap();
         let set = json!({ "key": "count", "value": 2 });
 
@@ -563,6 +642,59 @@ mod tests {
         assert_eq!(got, json!(2));
         assert!(call(&manifest, &storage, "storage.get", &json!({})).is_err());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn notifications_are_checked_titled_and_limited() {
+        use crate::plugin_storage::PluginStorage;
+        use serde_json::json;
+        use std::cell::RefCell;
+
+        let root = fixture("notify");
+        let storage = PluginStorage::new(&root.join("data"));
+        let shown = RefCell::new(Vec::new());
+        let notify = |title: &str, body: &str| {
+            shown.borrow_mut().push((title.to_owned(), body.to_owned()));
+            Ok(())
+        };
+        let limiter = RateLimiter::new(2, std::time::Duration::from_secs(60));
+        let host = Host {
+            storage: &storage,
+            notify: &notify,
+            limiter: &limiter,
+        };
+        let mut manifest = load_manifest(&root, "com.example.notes").unwrap();
+        let message = json!({ "title": " Break time ", "body": "5 minutes" });
+
+        let denied = call(&manifest, &host, "notify", &message).unwrap_err();
+        assert!(denied.contains("notifications permission"), "{denied}");
+
+        manifest.permissions.push(Permission::Notifications);
+        call(&manifest, &host, "notify", &message).unwrap();
+        assert_eq!(
+            shown.borrow()[0],
+            ("Notes · Break time".to_owned(), "5 minutes".to_owned())
+        );
+        assert!(call(&manifest, &host, "notify", &json!({ "body": "x" })).is_err());
+        assert!(call(&manifest, &host, "notify", &json!({ "title": 3 })).is_err());
+        let long = "x".repeat(MAX_TITLE + 1);
+        assert!(call(&manifest, &host, "notify", &json!({ "title": long })).is_err());
+
+        call(&manifest, &host, "notify", &json!({ "title": "two" })).unwrap();
+        let limited = call(&manifest, &host, "notify", &json!({ "title": "three" })).unwrap_err();
+        assert!(limited.contains("too many"), "{limited}");
+        assert_eq!(shown.borrow().len(), 2);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rate_limits_per_plugin_and_window() {
+        let limiter = RateLimiter::new(1, std::time::Duration::from_secs(60));
+        let start = std::time::Instant::now();
+        assert!(limiter.allow("a", start));
+        assert!(!limiter.allow("a", start + std::time::Duration::from_secs(30)));
+        assert!(limiter.allow("b", start));
+        assert!(limiter.allow("a", start + std::time::Duration::from_secs(61)));
     }
 
     #[test]

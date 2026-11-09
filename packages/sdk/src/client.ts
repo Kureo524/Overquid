@@ -19,6 +19,13 @@ export interface Storage {
   keys(): Promise<string[]>;
 }
 
+export interface Notification {
+  /** Shown after the plugin's name, which the core always puts first. 80 characters at most. */
+  title: string;
+  /** 300 characters at most. */
+  body?: string;
+}
+
 export interface OverquidClient {
   /** Called each time the plugin's panel becomes visible. */
   onShow(callback: () => void): Unsubscribe;
@@ -28,6 +35,11 @@ export interface OverquidClient {
   readonly visible: boolean;
   /** Data of this plugin, kept by the core. Needs the `storage` permission. */
   storage: Storage;
+  /**
+   * Shows a desktop notification. Needs the `notifications` permission; at
+   * most 5 per minute.
+   */
+  notify(notification: Notification): Promise<void>;
   /** Raw call to a core method. Prefer the typed helpers. */
   call<T = unknown>(method: string, args?: unknown): Promise<T>;
 }
@@ -79,6 +91,9 @@ export function createClient(transport: Transport): OverquidClient {
       return visible;
     },
     call,
+    notify: async ({ title, body }) => {
+      await call('notify', { title, body });
+    },
     storage: {
       get: async <T extends Json>(key: string) => {
         const value = await call<T | null>('storage.get', { key });

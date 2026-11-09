@@ -40,7 +40,9 @@
       "../../../plugins/dev.overquid.notes/manifest.json": "plugins/dev.overquid.notes/manifest.json",
       "../../../plugins/dev.overquid.notes/dist/": "plugins/dev.overquid.notes/dist/",
       "../../../plugins/dev.overquid.todo/manifest.json": "plugins/dev.overquid.todo/manifest.json",
-      "../../../plugins/dev.overquid.todo/dist/": "plugins/dev.overquid.todo/dist/"
+      "../../../plugins/dev.overquid.todo/dist/": "plugins/dev.overquid.todo/dist/",
+      "../../../plugins/dev.overquid.pomodoro/manifest.json": "plugins/dev.overquid.pomodoro/manifest.json",
+      "../../../plugins/dev.overquid.pomodoro/dist/": "plugins/dev.overquid.pomodoro/dist/"
     }
   }
 }
