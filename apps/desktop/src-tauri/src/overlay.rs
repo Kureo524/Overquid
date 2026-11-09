@@ -356,20 +356,12 @@ fn remap_unfocused<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<()> {
 fn cover_monitor<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<()> {
     // A window that was never shown has no current monitor, and Wayland has
     // no primary monitor: fall back to the first one rather than do nothing.
-    let current = window.current_monitor()?;
-    let primary = if current.is_none() {
-        window.primary_monitor()?
-    } else {
-        None
-    };
-    eprintln!(
-        "[mon] current={} primary={}",
-        current.is_some(),
-        primary.is_some()
-    );
-    let monitor = match current.or(primary) {
+    let monitor = match window.current_monitor()? {
         Some(monitor) => Some(monitor),
-        None => window.available_monitors()?.into_iter().next(),
+        None => match window.primary_monitor()? {
+            Some(monitor) => Some(monitor),
+            None => window.available_monitors()?.into_iter().next(),
+        },
     };
     if let Some(monitor) = monitor {
         window.set_position(*monitor.position())?;

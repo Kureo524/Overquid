@@ -1,0 +1,9 @@
+{
+  "id": "dev.overquid.clock",
+  "name": "Clock",
+  "version": "1.0.0",
+  "entry": "dist/index.html",
+  "panel": { "defaultSize": [200, 36], "position": "top-right" },
+  "permissions": [],
+  "network": []
+}

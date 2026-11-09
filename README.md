@@ -61,6 +61,7 @@ Requires Node 20+, pnpm 10, Rust (stable) and the
 
 ```sh
 pnpm install
+pnpm build      # SDK, shipped plugins and UI; needed once before any cargo command
 pnpm lint && pnpm typecheck && pnpm test
 cargo clippy --workspace -- -D warnings && cargo test --workspace
 ```

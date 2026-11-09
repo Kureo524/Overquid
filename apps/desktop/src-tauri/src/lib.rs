@@ -61,28 +61,35 @@ fn plugin_call<R: Runtime>(
     method: String,
     args: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    let manifest = plugins::load_manifest(&plugins_dir(&app), &plugin_id)
+    let (_, manifest) = plugins::find(&plugin_roots(&app), &plugin_id)
         .ok_or_else(|| format!("unknown plugin '{plugin_id}'"))?;
     plugins::call(&manifest, &storage, &method, &args)
 }
 
 #[tauri::command(async)]
 fn list_plugins<R: Runtime>(app: tauri::AppHandle<R>) -> Vec<plugins::Manifest> {
-    plugins::list(&plugins_dir(&app))
+    plugins::list_all(&plugin_roots(&app))
 }
 
-/// Folder holding one sub-folder per plugin. `OVERQUID_PLUGINS_DIR` overrides
-/// it during development.
-fn plugins_dir<R: Runtime>(app: &tauri::AppHandle<R>) -> std::path::PathBuf {
-    std::env::var_os("OVERQUID_PLUGINS_DIR")
+/// Folders holding one sub-folder per plugin, by priority: the user's
+/// (`<app data>/plugins`, or `OVERQUID_PLUGINS_DIR` during development), then
+/// the plugins shipped with the app (bundled resources, also copied next to
+/// the binary in `target/` for development builds).
+fn plugin_roots<R: Runtime>(app: &tauri::AppHandle<R>) -> Vec<std::path::PathBuf> {
+    let user = std::env::var_os("OVERQUID_PLUGINS_DIR")
         .map(Into::into)
         .or_else(|| {
             app.path()
                 .app_data_dir()
                 .ok()
                 .map(|dir| dir.join("plugins"))
-        })
-        .unwrap_or_default()
+        });
+    let shipped = app
+        .path()
+        .resource_dir()
+        .ok()
+        .map(|dir| dir.join("plugins"));
+    user.into_iter().chain(shipped).collect()
 }
 
 fn apply<R: Runtime>(app: &tauri::AppHandle<R>, command: Command) {
@@ -118,7 +125,7 @@ pub fn run() {
             }
         }))
         .register_uri_scheme_protocol(plugins::SCHEME, |ctx, request| {
-            plugins::serve(&plugins_dir(ctx.app_handle()), request.uri().path())
+            plugins::serve_from(&plugin_roots(ctx.app_handle()), request.uri().path())
         })
         .setup(move |app| {
             let window = app
