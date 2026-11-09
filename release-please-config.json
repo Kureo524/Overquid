@@ -16,19 +16,30 @@
           "path": "apps/desktop/src-tauri/tauri.conf.json",
           "jsonpath": "$.version"
         },
-        { "type": "json", "path": "apps/desktop/package.json", "jsonpath": "$.version" }
+        {
+          "type": "json",
+          "path": "apps/desktop/package.json",
+          "jsonpath": "$.version"
+        }
       ]
     },
     "packages/sdk": {
       "release-type": "node",
       "package-name": "@overquid/sdk",
       "component": "sdk",
-      "extra-files": [{ "type": "generic", "path": "src/index.ts" }]
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "src/index.ts"
+        }
+      ]
     },
     "packages/create-overlay-plugin": {
       "release-type": "node",
       "package-name": "create-overlay-plugin",
       "component": "create-overlay-plugin"
     }
-  }
+  },
+  "pull-request-title-pattern": "chore(release): release${component} ${version}",
+  "group-pull-request-title-pattern": "chore(release): release ${branch}"
 }
