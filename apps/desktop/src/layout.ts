@@ -103,10 +103,27 @@ export function parseLayout(value: unknown): Layout {
   return layout;
 }
 
+/** Panels that moved to another id (built-in clock → clock plugin). */
+const RENAMED: Record<string, string> = { clock: 'dev.overquid.clock' };
+
+/** Carries saved positions over to renamed panels, unless already set. */
+export function migrateLayout(layout: Layout): Layout {
+  const migrated: Layout = {};
+  for (const [id, panel] of Object.entries(layout)) {
+    const target = RENAMED[id];
+    if (!target) migrated[id] = panel;
+  }
+  for (const [from, to] of Object.entries(RENAMED)) {
+    const old = layout[from];
+    if (old && !layout[to]) migrated[to] = old;
+  }
+  return migrated;
+}
+
 export const serializeLayout = (layout: Layout) => ({ version: LAYOUT_VERSION, panels: layout });
 
 export const loadLayout = async (): Promise<Layout> =>
-  parseLayout(await invoke<unknown>('load_layout'));
+  migrateLayout(parseLayout(await invoke<unknown>('load_layout')));
 
 export const saveLayout = (layout: Layout) =>
   invoke('save_layout', { layout: serializeLayout(layout) });

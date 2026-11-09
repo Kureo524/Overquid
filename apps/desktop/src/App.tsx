@@ -1,6 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Clock } from './Clock';
-import { loadLayout, saveLayout, type Layout, type PanelLayout, type Size } from './layout';
+import {
+  loadLayout,
+  saveLayout,
+  type Layout,
+  type PanelLayout,
+  type Placement,
+  type Size,
+} from './layout';
 import {
   regionsOf,
   releaseKeyboard,
@@ -27,10 +33,19 @@ const DEFAULT_PLUGIN_SIZE: [number, number] = [320, 240];
 /** Where built-in panels go until the user moves them. */
 const builtIn: Record<string, PanelLayout> = {
   welcome: { placement: { h: 'center', v: 'center', dx: 0, dy: 0 }, pinned: false },
-  clock: { placement: { h: 'right', v: 'top', dx: 16, dy: 16 }, pinned: false },
 };
 
-/** Default spot of a panel: built-in ones by name, plugins cascade from the top left. */
+const MARGIN = 16;
+const atPosition: Record<NonNullable<PluginManifest['panel']['position']>, Placement> = {
+  'top-left': { h: 'left', v: 'top', dx: MARGIN, dy: MARGIN },
+  'top-right': { h: 'right', v: 'top', dx: MARGIN, dy: MARGIN },
+  'bottom-left': { h: 'left', v: 'bottom', dx: MARGIN, dy: MARGIN },
+  'bottom-right': { h: 'right', v: 'bottom', dx: MARGIN, dy: MARGIN },
+  center: { h: 'center', v: 'center', dx: 0, dy: 0 },
+};
+
+/** Default spot of a panel: built-in ones by name, plugins where their
+ * manifest asks, or cascading from the top left. */
 function defaultLayout(id: PanelId, plugins: PluginManifest[]): PanelLayout {
   const known = builtIn[id];
   if (known) return known;
@@ -38,8 +53,12 @@ function defaultLayout(id: PanelId, plugins: PluginManifest[]): PanelLayout {
     0,
     plugins.findIndex((plugin) => plugin.id === id),
   );
-  const offset = 16 + 32 * index;
-  return { placement: { h: 'left', v: 'top', dx: offset, dy: offset }, pinned: false };
+  const position = plugins[index]?.panel.position;
+  const offset = MARGIN + 32 * index;
+  return {
+    placement: position ? atPosition[position] : { h: 'left', v: 'top', dx: offset, dy: offset },
+    pinned: false,
+  };
 }
 
 /** Installed plugins, and the broker relaying their calls (ADR 0003). */
@@ -190,11 +209,6 @@ export function App() {
             </Panel>
           );
         })}
-      {visible('clock') && (
-        <Panel title="Clock" width={200} {...panelProps('clock')}>
-          <Clock running={visibility !== 'hidden'} />
-        </Panel>
-      )}
     </main>
   );
 }

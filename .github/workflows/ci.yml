@@ -68,14 +68,15 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
-      # tauri::generate_context! embeds the frontend at compile time.
+      # The frontend is embedded at compile time, and tauri-build copies the
+      # shipped plugins (built with Vite) next to the binary.
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @overquid/desktop build
+      - run: pnpm build
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked

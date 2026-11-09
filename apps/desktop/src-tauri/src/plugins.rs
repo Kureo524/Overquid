@@ -27,10 +27,22 @@ pub enum Permission {
     Events,
 }
 
+/// Where a plugin's panel goes until the user moves it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PanelPosition {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+    Center,
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PanelSpec {
     pub default_size: Option<[u32; 2]>,
+    pub position: Option<PanelPosition>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -180,6 +192,44 @@ pub fn list(root: &Path) -> Vec<Manifest> {
         .collect();
     manifests.sort_by(|a, b| a.id.cmp(&b.id));
     manifests
+}
+
+/// Plugins can live in several folders (the user's, then those shipped with
+/// the app). For a given id, the first folder holding a valid plugin wins, so
+/// a user plugin overrides a shipped one.
+pub fn find(roots: &[PathBuf], id: &str) -> Option<(PathBuf, Manifest)> {
+    roots
+        .iter()
+        .find_map(|root| load_manifest(root, id).map(|manifest| (root.clone(), manifest)))
+}
+
+/// Every plugin of every folder, each id once (first folder wins), by id.
+pub fn list_all(roots: &[PathBuf]) -> Vec<Manifest> {
+    let mut seen = std::collections::BTreeMap::new();
+    for root in roots {
+        for manifest in list(root) {
+            seen.entry(manifest.id.clone()).or_insert(manifest);
+        }
+    }
+    seen.into_values().collect()
+}
+
+/// Serves a request from the folder that holds the requested plugin.
+pub fn serve_from(roots: &[PathBuf], request_path: &str) -> Response<Cow<'static, [u8]>> {
+    let id = percent_encoding::percent_decode_str(request_path)
+        .decode_utf8_lossy()
+        .trim_start_matches('/')
+        .split('/')
+        .next()
+        .unwrap_or_default()
+        .to_owned();
+    if !is_valid_id(&id) {
+        return status(StatusCode::FORBIDDEN);
+    }
+    match find(roots, &id) {
+        Some((root, _)) => serve(&root, request_path),
+        None => status(StatusCode::NOT_FOUND),
+    }
 }
 
 /// CSP of a plugin document: its own files, and the network domains it declared.
@@ -370,6 +420,49 @@ mod tests {
         assert_eq!(got, json!(2));
         assert!(call(&manifest, &storage, "storage.get", &json!({})).is_err());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn first_folder_wins_for_an_id() {
+        let user = fixture("user");
+        let shipped = fixture("shipped");
+        fs::write(
+            shipped.join("com.example.notes/manifest.json"),
+            r#"{"id":"com.example.notes","name":"Shipped","version":"1.0.0","entry":"dist/index.html","panel":{"position":"top-right"}}"#,
+        )
+        .unwrap();
+        let other = shipped.join("dev.other");
+        fs::create_dir_all(&other).unwrap();
+        fs::write(
+            other.join("manifest.json"),
+            r#"{"id":"dev.other","name":"Other","version":"1","entry":"i.html"}"#,
+        )
+        .unwrap();
+        fs::write(other.join("i.html"), "other").unwrap();
+
+        let roots = [user.clone(), shipped.clone()];
+        let names: Vec<String> = list_all(&roots).into_iter().map(|m| m.name).collect();
+        assert_eq!(names, ["Notes", "Other"]);
+        assert_eq!(find(&roots, "com.example.notes").unwrap().0, user);
+        assert_eq!(
+            serve_from(&roots, "/dev.other/i.html").status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            serve_from(&roots, "/dev.missing/i.html").status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            serve_from(&roots, "/%2e%2e/secret.txt").status(),
+            StatusCode::FORBIDDEN
+        );
+        let shipped_manifest = load_manifest(&shipped, "com.example.notes").unwrap();
+        assert_eq!(
+            shipped_manifest.panel.position,
+            Some(PanelPosition::TopRight)
+        );
+        fs::remove_dir_all(user).unwrap();
+        fs::remove_dir_all(shipped).unwrap();
     }
 
     #[test]

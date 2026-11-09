@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
-const { parseLayout, serializeLayout, toPlacement, toPosition } = await import('./layout');
+const { migrateLayout, parseLayout, serializeLayout, toPlacement, toPosition } =
+  await import('./layout');
 
 const laptop = { width: 1920, height: 1080 };
 const wide = { width: 2560, height: 1600 };
@@ -76,6 +77,21 @@ describe('parseLayout', () => {
     expect(parseLayout(value)).toEqual({
       clock: clockLayout,
       noPinned: { placement: { h: 'left', v: 'top', dx: 1, dy: 2 }, pinned: false },
+    });
+  });
+});
+
+describe('migrateLayout', () => {
+  const saved = { placement: { h: 'left', v: 'top', dx: 18, dy: 18 }, pinned: true } as const;
+
+  it('moves the built-in clock to the clock plugin', () => {
+    expect(migrateLayout({ clock: saved })).toEqual({ 'dev.overquid.clock': saved });
+  });
+
+  it('keeps the plugin entry when both exist', () => {
+    const plugin = { ...saved, pinned: false };
+    expect(migrateLayout({ clock: saved, 'dev.overquid.clock': plugin })).toEqual({
+      'dev.overquid.clock': plugin,
     });
   });
 });

@@ -7,7 +7,10 @@ export interface PluginManifest {
   name: string;
   version: string;
   entry: string;
-  panel: { defaultSize?: [number, number] | null };
+  panel: {
+    defaultSize?: [number, number] | null;
+    position?: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'center' | null;
+  };
   permissions: string[];
   network: string[];
 }
