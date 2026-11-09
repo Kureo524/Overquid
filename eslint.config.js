@@ -10,4 +10,6 @@ export default tseslint.config(
   prettier,
   // Plugins are plain browser scripts running in their own iframe.
   { files: ['plugins/**/*.js'], languageOptions: { globals: globals.browser } },
+  // Build scripts run in Node.
+  { files: ['**/scripts/**/*.mjs'], languageOptions: { globals: globals.node } },
 );

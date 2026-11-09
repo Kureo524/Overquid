@@ -1,4 +1,5 @@
 mod cli;
+mod content_filter;
 mod json_file;
 mod layout;
 mod overlay;
@@ -6,6 +7,8 @@ mod plugin_storage;
 mod plugins;
 mod state;
 mod web_panels;
+#[cfg(target_os = "linux")]
+mod webkit_filter;
 
 use tauri::{Emitter, Manager, Runtime, State, WebviewWindow};
 
@@ -182,6 +185,114 @@ fn plugin_roots<R: Runtime>(app: &tauri::AppHandle<R>) -> Vec<std::path::PathBuf
     user.into_iter().chain(shipped).collect()
 }
 
+/// Sent with a `content_filter::Status` whenever the content filter changes.
+const CONTENT_FILTER_EVENT: &str = "content-filter";
+
+/// The content filter's state (ADR 0005). `generation` drops the result of a
+/// build that a later switch made obsolete.
+struct ContentFilter {
+    settings: std::path::PathBuf,
+    status: std::sync::Mutex<content_filter::Status>,
+    generation: std::sync::atomic::AtomicU64,
+}
+
+#[tauri::command]
+fn content_filter_status(filter: State<'_, ContentFilter>) -> content_filter::Status {
+    filter
+        .status
+        .lock()
+        .map(|status| status.clone())
+        .unwrap_or(content_filter::Status::Off)
+}
+
+#[tauri::command]
+fn set_content_filter<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    filter: State<'_, ContentFilter>,
+    enabled: bool,
+) -> Result<(), String> {
+    content_filter::Settings { enabled }.save(&filter.settings)?;
+    start_content_filter(&app, enabled);
+    Ok(())
+}
+
+fn report_content_filter<R: Runtime>(app: &tauri::AppHandle<R>, status: content_filter::Status) {
+    if let Ok(mut current) = app.state::<ContentFilter>().status.lock() {
+        *current = status.clone();
+    }
+    let _ = app.emit(CONTENT_FILTER_EVENT, status);
+}
+
+/// Switches the filter on (lists fetched and compiled on a worker thread) or off.
+fn start_content_filter<R: Runtime>(app: &tauri::AppHandle<R>, enabled: bool) {
+    use content_filter::Status;
+    use std::sync::atomic::Ordering;
+
+    let generation = app
+        .state::<ContentFilter>()
+        .generation
+        .fetch_add(1, Ordering::SeqCst)
+        + 1;
+    let Ok(store) = app
+        .path()
+        .app_data_dir()
+        .map(|dir| dir.join("content-filter"))
+    else {
+        return;
+    };
+    if !enabled {
+        report_content_filter(app, Status::Off);
+        let _ = app.run_on_main_thread(move || web_panels::set_content_filter(None, store, |_| {}));
+        return;
+    }
+    report_content_filter(app, Status::Loading);
+    let cache = app
+        .path()
+        .app_cache_dir()
+        .map(|dir| content_filter::cache_dir(&dir))
+        .unwrap_or_else(|_| store.join("lists"));
+    let scriptlets = app
+        .path()
+        .resource_dir()
+        .map(|dir| dir.join("ubo-scriptlets.json"))
+        .unwrap_or_default();
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let current = move |app: &tauri::AppHandle<R>| {
+            app.state::<ContentFilter>()
+                .generation
+                .load(Ordering::SeqCst)
+                == generation
+        };
+        let compiled = content_filter::fetch_lists(&cache).and_then(|lists| {
+            content_filter::compile(lists, content_filter::load_scriptlets(&scriptlets))
+        });
+        if !current(&app) {
+            return;
+        }
+        let compiled = match compiled {
+            Ok(compiled) => compiled,
+            Err(message) => return report_content_filter(&app, Status::Error { message }),
+        };
+        let on = Status::On {
+            lists: compiled.lists,
+            scriptlets: compiled.scriptlets,
+        };
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if !current(&handle) {
+                return;
+            }
+            web_panels::set_content_filter(Some(compiled), store, move |result| {
+                if let Err(error) = &result {
+                    eprintln!("overquid: content filter: {error}");
+                }
+                report_content_filter(&handle, on);
+            });
+        });
+    });
+}
+
 /// Sent with a `cli::OverlaySwitch` for `overquid next|prev|switch NAME`.
 const OVERLAY_SWITCH_EVENT: &str = "overlay-switch";
 
@@ -238,6 +349,16 @@ pub fn run() {
                 &app.path().app_data_dir()?.join("plugin-data"),
             ));
             app.manage(Overlay::setup(&window)?);
+            let settings = app.path().app_config_dir()?.join("content-filter.json");
+            let enabled = content_filter::Settings::load(&settings).enabled;
+            app.manage(ContentFilter {
+                settings,
+                status: std::sync::Mutex::new(content_filter::Status::Off),
+                generation: std::sync::atomic::AtomicU64::new(0),
+            });
+            if enabled {
+                start_content_filter(app.handle(), true);
+            }
             #[cfg(target_os = "linux")]
             quit_on_signals(app.handle());
             apply(app.handle(), command);
@@ -252,7 +373,9 @@ pub fn run() {
             plugin_call,
             list_plugins,
             web_panel,
-            web_navigate
+            web_navigate,
+            content_filter_status,
+            set_content_filter
         ])
         .run(tauri::generate_context!())
         .expect("error while running Overquid");

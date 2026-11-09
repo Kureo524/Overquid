@@ -1,5 +1,6 @@
 import { useLayoutEffect, useState, type KeyboardEvent } from 'react';
 import { geometryChanged } from './geometry';
+import { describeFilter, filterEnabled, setContentFilter, useContentFilter } from './contentFilter';
 import { Menu, type MenuItem } from './Menu';
 import type { Overlay } from './overlays';
 
@@ -31,11 +32,12 @@ export function OverlayBar({
 }: OverlayBarProps) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [menu, setMenu] = useState<{
-    kind: 'add' | 'overlay';
+    kind: 'add' | 'overlay' | 'filter';
     x: number;
     y: number;
     id?: string;
   } | null>(null);
+  const filter = useContentFilter();
 
   // Web panels under the bar are cut where it is.
   useLayoutEffect(() => geometryChanged());
@@ -133,6 +135,53 @@ export function OverlayBar({
       >
         Add panel
       </button>
+      <button
+        type="button"
+        className="icon-button"
+        aria-label="Content filter"
+        aria-haspopup="menu"
+        aria-expanded={menu?.kind === 'filter'}
+        aria-pressed={filterEnabled(filter)}
+        title="Block ads and trackers in web panels"
+        onClick={(event) => {
+          const box = event.currentTarget.getBoundingClientRect();
+          setMenu(
+            menu?.kind === 'filter' ? null : { kind: 'filter', x: box.right, y: box.bottom + 6 },
+          );
+          event.currentTarget.blur();
+        }}
+      >
+        <svg
+          viewBox="0 0 16 16"
+          width="14"
+          height="14"
+          aria-hidden="true"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinejoin="round"
+        >
+          <path d="M8 1.8 13.2 3.8v4c0 3-2.2 5.3-5.2 6.4-3-1.1-5.2-3.4-5.2-6.4v-4Z" />
+        </svg>
+      </button>
+      {menu?.kind === 'filter' && (
+        <Menu
+          at={menu}
+          items={[
+            {
+              label: 'Block ads and trackers',
+              checked: filterEnabled(filter),
+              onPick: () => {
+                setContentFilter(!filterEnabled(filter)).catch((error: unknown) =>
+                  console.error('Cannot switch the content filter:', error),
+                );
+              },
+            },
+            { label: describeFilter(filter), disabled: true, onPick: () => undefined },
+          ]}
+          onClose={() => setMenu(null)}
+        />
+      )}
       {menu?.kind === 'add' && (
         <Menu
           at={menu}

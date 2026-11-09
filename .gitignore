@@ -9,3 +9,6 @@ target/
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# Built from uBlock Origin by apps/desktop/scripts/ubo-scriptlets.mjs
+apps/desktop/src-tauri/resources/ubo-scriptlets.json
