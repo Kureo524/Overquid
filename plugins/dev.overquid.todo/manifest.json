@@ -1,0 +1,12 @@
+{
+  "id": "dev.overquid.todo",
+  "name": "To-do",
+  "version": "1.0.0",
+  "entry": "dist/index.html",
+  "panel": {
+    "defaultSize": [320, 300],
+    "position": "bottom-left"
+  },
+  "permissions": ["storage"],
+  "network": []
+}
