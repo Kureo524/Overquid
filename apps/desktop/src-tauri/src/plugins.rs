@@ -45,12 +45,28 @@ pub struct PanelSpec {
     pub position: Option<PanelPosition>,
 }
 
+/// A web panel (ADR 0004): an official web app shown in a native view.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebSpec {
+    pub url: String,
+    /// Host names the panel may navigate to (`example.com`, `*.example.com`).
+    pub hosts: Vec<String>,
+    /// Pause audio and video when the panel is hidden.
+    #[serde(default)]
+    pub pause_on_hide: bool,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Manifest {
     pub id: String,
     pub name: String,
     pub version: String,
-    pub entry: String,
+    /// Entry HTML file of an iframe plugin. Exactly one of `entry` and `web`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web: Option<WebSpec>,
     #[serde(default)]
     pub panel: PanelSpec,
     #[serde(default)]
@@ -125,7 +141,51 @@ pub fn resolve(root: &Path, request_path: &str) -> Result<(String, PathBuf), Res
 pub fn load_manifest(root: &Path, id: &str) -> Option<Manifest> {
     let text = fs::read_to_string(root.join(id).join("manifest.json")).ok()?;
     let manifest: Manifest = serde_json::from_str(&text).ok()?;
-    (manifest.id == id).then_some(manifest)
+    (manifest.id == id && is_coherent(&manifest)).then_some(manifest)
+}
+
+/// Exactly one of `entry` and `web`; a web panel must start on an `https` URL
+/// whose host it declares.
+fn is_coherent(manifest: &Manifest) -> bool {
+    match (&manifest.entry, &manifest.web) {
+        (Some(_), None) => true,
+        (None, Some(web)) => {
+            web.hosts
+                .iter()
+                .all(|pattern| is_valid_host_pattern(pattern))
+                && https_host(&web.url).is_some_and(|host| host_allowed(&host, &web.hosts))
+        }
+        _ => false,
+    }
+}
+
+fn is_valid_host_pattern(pattern: &str) -> bool {
+    is_valid_domain(pattern.strip_prefix("*.").unwrap_or(pattern))
+}
+
+/// Host of an `https://` URL, lowercased; `None` for anything else.
+pub fn https_host(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("https://")?;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    // No credentials in the URL; drop the port.
+    if authority.contains('@') {
+        return None;
+    }
+    let host = authority.split(':').next()?.to_ascii_lowercase();
+    (!host.is_empty()).then_some(host)
+}
+
+/// Whether `host` matches one of the patterns: `example.com` matches only
+/// itself, `*.example.com` matches its subdomains (not `example.com`).
+pub fn host_allowed(host: &str, patterns: &[String]) -> bool {
+    patterns
+        .iter()
+        .any(|pattern| match pattern.strip_prefix("*.") {
+            Some(domain) => host
+                .strip_suffix(domain)
+                .is_some_and(|prefix| prefix.ends_with('.') && prefix.len() > 1),
+            None => host == pattern,
+        })
 }
 
 /// Runs a call relayed by the host for `manifest`'s plugin, after checking it
@@ -463,6 +523,68 @@ mod tests {
         );
         fs::remove_dir_all(user).unwrap();
         fs::remove_dir_all(shipped).unwrap();
+    }
+
+    #[test]
+    fn matches_hosts_and_urls() {
+        let hosts = vec!["discord.com".to_owned(), "*.discord.com".to_owned()];
+        assert!(host_allowed("discord.com", &hosts));
+        assert!(host_allowed("cdn.discord.com", &hosts));
+        assert!(!host_allowed("evil-discord.com", &hosts));
+        assert!(!host_allowed("discord.com.evil.net", &hosts));
+        assert!(!host_allowed(".discord.com", &hosts));
+        assert!(!host_allowed("example.com", &hosts));
+        assert_eq!(
+            https_host("https://Discord.com:443/app?x=1").as_deref(),
+            Some("discord.com")
+        );
+        assert_eq!(https_host("http://discord.com/"), None);
+        assert_eq!(https_host("https://user@evil.com/"), None);
+    }
+
+    #[test]
+    fn web_manifests_must_be_coherent() {
+        let root = fixture("web");
+        let write = |id: &str, body: &str| {
+            fs::create_dir_all(root.join(id)).unwrap();
+            fs::write(
+                root.join(id).join("manifest.json"),
+                format!(r#"{{"id":"{id}","name":"W","version":"1",{body}}}"#),
+            )
+            .unwrap();
+        };
+        write(
+            "dev.ok",
+            r#""web":{"url":"https://discord.com/app","hosts":["discord.com"]}"#,
+        );
+        write(
+            "dev.both",
+            r#""entry":"i.html","web":{"url":"https://discord.com/","hosts":["discord.com"]}"#,
+        );
+        write("dev.none", r#""permissions":[]"#);
+        write(
+            "dev.http",
+            r#""web":{"url":"http://discord.com/","hosts":["discord.com"]}"#,
+        );
+        write(
+            "dev.offlist",
+            r#""web":{"url":"https://evil.com/","hosts":["discord.com"]}"#,
+        );
+        write(
+            "dev.badhost",
+            r#""web":{"url":"https://discord.com/","hosts":["discord.com","https://x"]}"#,
+        );
+        assert!(load_manifest(&root, "dev.ok").unwrap().web.is_some());
+        for id in [
+            "dev.both",
+            "dev.none",
+            "dev.http",
+            "dev.offlist",
+            "dev.badhost",
+        ] {
+            assert!(load_manifest(&root, id).is_none(), "{id}");
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

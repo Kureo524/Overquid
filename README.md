@@ -39,6 +39,18 @@ Save several layouts ("Work", "Game") and bind them to the app in the foreground
 }
 ```
 
+## Shipped plugins
+
+| Plugin  | What it is                                                                              |
+| ------- | --------------------------------------------------------------------------------------- |
+| Clock   | Time at a glance; stops ticking while hidden                                            |
+| Discord | The official Discord web app, in a panel (log in once, it stays connected while hidden) |
+| YouTube | The official YouTube site, in a panel; videos pause when the panel is hidden            |
+
+Discord and YouTube refuse to be embedded in a page, so they run as **web panels**: native WebKitGTK views placed by
+the core over their panel, with their own browsing data and no access to the app (Linux only for now). Links to other
+sites open in your browser.
+
 ## Platforms
 
 Linux first, Windows next. macOS is out of scope for now.
@@ -58,6 +70,14 @@ all in a pnpm monorepo.
 
 Requires Node 20+, pnpm 10, Rust (stable) and the
 [Tauri system dependencies](https://v2.tauri.app/start/prerequisites/#linux), plus `gtk-layer-shell` on Linux.
+Web panels (Discord, YouTube) also need the GStreamer plugins for sound and video: without `autoaudiosink`, WebKit
+crashes as soon as a page plays sound.
+
+```sh
+sudo pacman -S gst-plugins-good gst-libav               # Arch
+sudo dnf install gstreamer1-plugins-good gstreamer1-plugin-libav   # Fedora
+sudo apt install gstreamer1.0-plugins-good gstreamer1.0-libav       # Debian, Ubuntu
+```
 
 ```sh
 pnpm install

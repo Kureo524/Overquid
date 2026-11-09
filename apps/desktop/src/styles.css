@@ -156,6 +156,14 @@ kbd {
   background: transparent;
 }
 
+.web-slot {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  border-radius: 10px;
+  background: var(--canvas, rgba(11, 12, 17, 0.8));
+}
+
 .big-number {
   margin: 0;
   font: 600 26px/1.2 var(--font-num);
@@ -178,4 +186,30 @@ kbd {
       opacity: 0;
     }
   }
+}
+
+.panel__body--fixed > * {
+  height: 100%;
+}
+
+.panel__resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
+.panel__resize::after {
+  content: '';
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid var(--text-3);
+  border-bottom: 1.5px solid var(--text-3);
+  border-bottom-right-radius: 2px;
 }

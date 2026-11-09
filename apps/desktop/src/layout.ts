@@ -27,6 +27,8 @@ export interface Placement {
 export interface PanelLayout {
   placement: Placement;
   pinned: boolean;
+  /** Panel width and content height, once the user resized the panel. */
+  size?: Size;
 }
 
 export type Layout = Record<string, PanelLayout>;
@@ -86,9 +88,33 @@ function parsePanel(value: unknown): PanelLayout | null {
   if (h !== 'left' && h !== 'center' && h !== 'right') return null;
   if (v !== 'top' && v !== 'center' && v !== 'bottom') return null;
   if (!Number.isFinite(dx) || !Number.isFinite(dy)) return null;
-  return {
+  const panel: PanelLayout = {
     placement: { h, v, dx: dx as number, dy: dy as number },
     pinned: value.pinned === true,
+  };
+  const size = parseSize(value.size);
+  if (size) panel.size = size;
+  return panel;
+}
+
+const isLength = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value > 0;
+
+function parseSize(value: unknown): Size | null {
+  if (!isRecord(value) || !isLength(value.width) || !isLength(value.height)) return null;
+  return { width: Math.round(value.width), height: Math.round(value.height) };
+}
+
+/** Smallest size a panel can be resized to (panel width, content height). */
+export const MIN_SIZE: Size = { width: 160, height: 60 };
+
+/** Clamps a content size between `MIN_SIZE` and `max`. */
+export function clampSize(size: Size, max: Size): Size {
+  const clamp = (value: number, min: number, limit: number) =>
+    Math.round(Math.max(min, Math.min(value, Math.max(min, limit))));
+  return {
+    width: clamp(size.width, MIN_SIZE.width, max.width),
+    height: clamp(size.height, MIN_SIZE.height, max.height),
   };
 }
 

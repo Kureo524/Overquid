@@ -45,7 +45,10 @@ impl Overlay {
     pub fn setup<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<Self> {
         let mode = platform_setup(window)?;
         #[cfg(target_os = "linux")]
-        handle_escape(window)?;
+        {
+            handle_escape(window)?;
+            crate::web_panels::install(&window.gtk_window()?);
+        }
         Ok(Self {
             mode,
             inner: Mutex::new(Inner {
@@ -144,6 +147,11 @@ impl Overlay {
             Visibility::Summoned => {
                 if self.mode == Mode::Fallback {
                     window.set_focusable(true)?;
+                    // Already mapped for pinned panels: GNOME would neither
+                    // raise nor focus it. Map it again, as a new window.
+                    if previous == Visibility::Pinned {
+                        window.hide()?;
+                    }
                 }
                 set_input_region(window, None)?;
                 window.show()?;
