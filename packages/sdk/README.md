@@ -34,7 +34,7 @@ await overquid.storage.set('count', count + 1);
 | `onShow`, `onHide`, `visible`                                          | none              |
 | `storage.get`, `set`, `remove`, `keys` (JSON values, 1 MiB per plugin) | `storage`         |
 | `notify({ title, body })`: desktop notification, 5 per minute          | `notifications`   |
-| `fetch` to the host names listed in `network`                          | `network` entries |
+| `fetch` and `WebSocket` (`https`, `wss`) to the hosts in `network`     | `network` entries |
 
 Notes:
 
@@ -43,5 +43,7 @@ Notes:
   emits.
 - `localStorage` and cookies are unavailable (sandboxed iframe): use `storage`.
 - A notification's title always starts with the plugin's name: a plugin cannot pass for another one.
+- A `network` entry is a host name, with an optional port: `api.example.com`, `example.com:8443`, or `*` for any port
+  (`archipelago.gg:*`). Plain `http` and `ws` are blocked.
 
 See [`plugins/dev.overquid.sdk-demo`](../../plugins/dev.overquid.sdk-demo) for a complete example.

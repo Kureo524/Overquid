@@ -48,6 +48,9 @@ export interface PluginManifest {
     defaultSize?: [width: number, height: number];
   };
   permissions?: Permission[];
-  /** Host names the plugin may reach with `fetch`, e.g. `api.example.com`. */
+  /**
+   * Hosts the plugin may reach with `fetch` (`https`) and `WebSocket` (`wss`):
+   * `api.example.com`, `example.com:8443`, or `archipelago.gg:*` for any port.
+   */
   network?: string[];
 }
