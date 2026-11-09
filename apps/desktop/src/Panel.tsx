@@ -1,13 +1,6 @@
-import {
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type PointerEvent,
-  type ReactNode,
-} from 'react';
-import { createPortal } from 'react-dom';
+import { useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode } from 'react';
 import { geometryChanged } from './geometry';
+import { Menu } from './Menu';
 import {
   clampSize,
   toPlacement,
@@ -19,9 +12,6 @@ import {
 
 /** A layer menu entry. */
 export type LayerAction = 'front' | 'back' | 'toggle-on-top';
-
-/** Stacking value of open menus: in front of every panel. */
-const MENU_LAYER = 2_000_000;
 
 interface PanelProps {
   title: string;
@@ -50,6 +40,8 @@ interface PanelProps {
   /** Called on any press in the panel: it comes to the front. */
   onRaise: () => void;
   onLayer: (action: LayerAction) => void;
+  /** Removes the panel from the current overlay. */
+  onClose: () => void;
   children: ReactNode;
 }
 
@@ -79,6 +71,7 @@ export function Panel({
   onTop,
   onRaise,
   onLayer,
+  onClose,
   children,
 }: PanelProps) {
   const ref = useRef<HTMLElement>(null);
@@ -243,6 +236,15 @@ export function Panel({
           >
             <PinIcon />
           </button>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label={`Remove ${title} from this overlay`}
+            title="Remove from this overlay"
+            onClick={onClose}
+          >
+            <CloseIcon />
+          </button>
         </span>
       </header>
       <div
@@ -261,13 +263,13 @@ export function Panel({
         />
       )}
       {menu && !hidden && (
-        <LayerMenu
+        <Menu
           at={menu}
-          onTop={onTop}
-          onPick={(action) => {
-            onLayer(action);
-            setMenu(null);
-          }}
+          items={[
+            { label: 'Bring to front', onPick: () => onLayer('front') },
+            { label: 'Send to back', onPick: () => onLayer('back') },
+            { label: 'Always on top', checked: onTop, onPick: () => onLayer('toggle-on-top') },
+          ]}
           onClose={() => setMenu(null)}
         />
       )}
@@ -275,65 +277,20 @@ export function Panel({
   );
 }
 
-/** Front, back, always on top. Drawn outside the panel (which clips its content). */
-function LayerMenu({
-  at,
-  onTop,
-  onPick,
-  onClose,
-}: {
-  at: { x: number; y: number };
-  onTop: boolean;
-  onPick: (action: LayerAction) => void;
-  onClose: () => void;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const close = (event: globalThis.PointerEvent) => {
-      if (!ref.current?.contains(event.target as Node)) onClose();
-    };
-    // Next tick: the click that opened the menu must not close it.
-    const timer = setTimeout(() => document.addEventListener('pointerdown', close));
-    return () => {
-      clearTimeout(timer);
-      document.removeEventListener('pointerdown', close);
-    };
-  }, [onClose]);
-  useLayoutEffect(() => {
-    geometryChanged();
-    return () => geometryChanged();
-  }, []);
-
-  const item = (action: LayerAction, label: string, checked?: boolean) => (
-    <button
-      type="button"
-      role={checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
-      aria-checked={checked}
-      className="menu__item"
-      onClick={() => onPick(action)}
+function CloseIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width="14"
+      height="14"
+      aria-hidden="true"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
     >
-      <span className="menu__check" aria-hidden="true">
-        {checked ? '✓' : ''}
-      </span>
-      {label}
-    </button>
-  );
-
-  return createPortal(
-    <div
-      ref={ref}
-      role="menu"
-      className="glass menu"
-      // Anchored by its right edge, under the button. No transform: web panels
-      // measure this menu to cut it out of their view.
-      style={{ right: window.innerWidth - at.x, top: at.y, zIndex: MENU_LAYER }}
-      data-layer={MENU_LAYER}
-    >
-      {item('front', 'Bring to front')}
-      {item('back', 'Send to back')}
-      {item('toggle-on-top', 'Always on top', onTop)}
-    </div>,
-    document.querySelector('.stage') ?? document.body,
+      <path d="m4.5 4.5 7 7m0-7-7 7" />
+    </svg>
   );
 }
 

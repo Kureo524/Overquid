@@ -9,7 +9,7 @@ mod web_panels;
 
 use tauri::{Emitter, Manager, Runtime, State, WebviewWindow};
 
-use cli::{CliError, Command};
+use cli::{CliError, Request};
 use layout::LayoutStore;
 use overlay::{Overlay, Status};
 use state::Rect;
@@ -182,7 +182,19 @@ fn plugin_roots<R: Runtime>(app: &tauri::AppHandle<R>) -> Vec<std::path::PathBuf
     user.into_iter().chain(shipped).collect()
 }
 
-fn apply<R: Runtime>(app: &tauri::AppHandle<R>, command: Command) {
+/// Sent with a `cli::OverlaySwitch` for `overquid next|prev|switch NAME`.
+const OVERLAY_SWITCH_EVENT: &str = "overlay-switch";
+
+fn apply<R: Runtime>(app: &tauri::AppHandle<R>, request: Request) {
+    let command = match request {
+        Request::Visibility(command) => command,
+        Request::Overlay(switch) => {
+            if let Err(error) = app.emit(OVERLAY_SWITCH_EVENT, switch) {
+                eprintln!("overquid: cannot switch overlay: {error}");
+            }
+            return;
+        }
+    };
     let Some(window) = app.get_webview_window(WINDOW) else {
         return;
     };
