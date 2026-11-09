@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Archipelago</title>
+    <script type="module" src="./src/main.ts"></script>
+  </head>
+  <body>
+    <form id="join" class="join" hidden>
+      <label>
+        Server
+        <input id="server" placeholder="archipelago.gg:38281" autocomplete="off" required />
+      </label>
+      <label>
+        Slot name
+        <input id="name" autocomplete="off" required />
+      </label>
+      <label>
+        Password
+        <input id="password" type="password" placeholder="Optional" autocomplete="off" />
+      </label>
+      <label class="check">
+        <input id="notify" type="checkbox" />
+        Notify items received while hidden
+      </label>
+      <button id="connect" type="submit">Connect</button>
+      <p id="join-error" class="error" role="alert"></p>
+      <p class="help">
+        Rooms hosted on archipelago.gg. This client only chats and tracks: play with your game's own
+        client.
+      </p>
+    </form>
+
+    <main id="room" class="room" hidden>
+      <header>
+        <div class="who">
+          <strong id="slot"></strong>
+          <span id="game"></span>
+        </div>
+        <span id="status" class="badge"></span>
+        <button id="retry" type="button" class="ghost">Reconnect</button>
+        <button id="leave" type="button" class="ghost">Disconnect</button>
+      </header>
+      <dl class="stats">
+        <div>
+          <dt>Checks</dt>
+          <dd id="checks"></dd>
+        </div>
+        <div>
+          <dt>Hint points</dt>
+          <dd id="points"></dd>
+        </div>
+      </dl>
+      <nav class="tabs" role="tablist">
+        <button type="button" role="tab" data-tab="log" aria-selected="true">Log</button>
+        <button type="button" role="tab" data-tab="items" aria-selected="false">Items</button>
+        <button type="button" role="tab" data-tab="hints" aria-selected="false">Hints</button>
+      </nav>
+      <ol id="log" class="feed" aria-live="polite"></ol>
+      <ol id="items" class="feed" hidden></ol>
+      <ol id="hints" class="feed" hidden></ol>
+      <form id="say">
+        <input
+          id="text"
+          aria-label="Message"
+          placeholder="Message, or !hint an item"
+          autocomplete="off"
+        />
+      </form>
+    </main>
+  </body>
+</html>
