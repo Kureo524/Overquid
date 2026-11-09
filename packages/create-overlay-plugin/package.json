@@ -1,0 +1,21 @@
+{
+  "name": "create-overlay-plugin",
+  "version": "0.1.0",
+  "description": "Create an Overquid plugin: manifest, Vite, TypeScript and the SDK, ready to run.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "create-overlay-plugin": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "generate.js",
+    "template"
+  ],
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^5.1.0"
+  }
+}

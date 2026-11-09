@@ -11,5 +11,8 @@ export default tseslint.config(
   // Plugins are plain browser scripts running in their own iframe.
   { files: ['plugins/**/*.js'], languageOptions: { globals: globals.browser } },
   // Build scripts run in Node.
-  { files: ['**/scripts/**/*.mjs'], languageOptions: { globals: globals.node } },
+  {
+    files: ['**/scripts/**/*.mjs', 'packages/create-overlay-plugin/*.js'],
+    languageOptions: { globals: globals.node },
+  },
 );
