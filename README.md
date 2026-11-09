@@ -70,6 +70,14 @@ all in a pnpm monorepo.
 
 Requires Node 20+, pnpm 10, Rust (stable) and the
 [Tauri system dependencies](https://v2.tauri.app/start/prerequisites/#linux), plus `gtk-layer-shell` on Linux.
+Web panels (Discord, YouTube) also need the GStreamer plugins for sound and video: without `autoaudiosink`, WebKit
+crashes as soon as a page plays sound.
+
+```sh
+sudo pacman -S gst-plugins-good gst-libav               # Arch
+sudo dnf install gstreamer1-plugins-good gstreamer1-plugin-libav   # Fedora
+sudo apt install gstreamer1.0-plugins-good gstreamer1.0-libav       # Debian, Ubuntu
+```
 
 ```sh
 pnpm install

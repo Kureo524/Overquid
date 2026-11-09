@@ -98,6 +98,24 @@ fn web_panel<R: Runtime>(
     rx.recv().map_err(|error| error.to_string())?
 }
 
+/// Quits cleanly on SIGTERM (`pkill`, end of session), SIGINT and SIGHUP:
+/// web pages are unloaded first, so sites save their state (ADR 0004).
+#[cfg(target_os = "linux")]
+fn quit_on_signals<R: Runtime>(app: &tauri::AppHandle<R>) {
+    use gtk::glib;
+    const SIGHUP: i32 = 1;
+    const SIGINT: i32 = 2;
+    const SIGTERM: i32 = 15;
+    for signal in [SIGHUP, SIGINT, SIGTERM] {
+        let app = app.clone();
+        glib::unix_signal_add_local(signal, move || {
+            let app = app.clone();
+            web_panels::unload_all(move || app.exit(0));
+            glib::ControlFlow::Break
+        });
+    }
+}
+
 #[tauri::command(async)]
 fn list_plugins<R: Runtime>(app: tauri::AppHandle<R>) -> Vec<plugins::Manifest> {
     plugins::list_all(&plugin_roots(&app))
@@ -168,6 +186,8 @@ pub fn run() {
                 &app.path().app_data_dir()?.join("plugin-data"),
             ));
             app.manage(Overlay::setup(&window)?);
+            #[cfg(target_os = "linux")]
+            quit_on_signals(app.handle());
             apply(app.handle(), command);
             Ok(())
         })

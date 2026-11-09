@@ -19,7 +19,12 @@ pub struct DataDirs {
 const PAUSE_MEDIA: &str = "document.querySelectorAll('video, audio').forEach((m) => m.pause())";
 
 #[cfg(target_os = "linux")]
-pub use linux::{install, place};
+pub use linux::{install, place, unload_all};
+
+#[cfg(not(target_os = "linux"))]
+pub fn unload_all(done: impl FnOnce() + 'static) {
+    done();
+}
 
 #[cfg(not(target_os = "linux"))]
 pub fn place(
@@ -33,12 +38,15 @@ pub fn place(
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::collections::HashMap;
+    use std::rc::Rc;
+    use std::time::Duration;
 
+    use gtk::glib;
     use gtk::prelude::*;
     use webkit2gtk::{
-        CookieManagerExt, CookiePersistentStorage, NavigationPolicyDecision,
+        CookieManagerExt, CookiePersistentStorage, LoadEvent, NavigationPolicyDecision,
         NavigationPolicyDecisionExt, NavigationType, PolicyDecisionExt, PolicyDecisionType,
         SettingsExt, URIRequestExt, WebContext, WebView, WebViewExt, WebsiteDataManager,
         WebsiteDataManagerExt,
@@ -56,6 +64,10 @@ mod linux {
     // GTK objects live on the main thread only; so does this state.
     thread_local! {
         static STATE: RefCell<Option<State>> = const { RefCell::new(None) };
+        /// Exact rectangle of each view in the overlay. Kept apart from
+        /// `STATE`: GTK reads it while laying out, possibly during `place`.
+        static RECTS: RefCell<Vec<(gtk::Widget, gtk::gdk::Rectangle)>> =
+            const { RefCell::new(Vec::new()) };
     }
 
     /// Slips a `gtk::Overlay` between the window and its content (Tao's box
@@ -66,6 +78,17 @@ mod linux {
             return;
         };
         let overlay = gtk::Overlay::new();
+        // Views get exactly their panel's rectangle. Margins plus a size
+        // request would only set a minimum: a view could grow, never shrink.
+        overlay.connect_get_child_position(|_, widget| {
+            RECTS.with(|rects| {
+                rects
+                    .borrow()
+                    .iter()
+                    .find(|(view, _)| view == widget)
+                    .map(|(_, rect)| *rect)
+            })
+        });
         window.remove(&content);
         overlay.add(&content);
         window.add(&overlay);
@@ -112,13 +135,68 @@ mod linux {
                 view
             });
             let (x, y, width, height) = rect;
-            view.set_margin_start(x);
-            view.set_margin_top(y);
-            view.set_size_request(width, height);
+            let rect = gtk::gdk::Rectangle::new(x, y, width, height);
+            let widget = view.clone().upcast::<gtk::Widget>();
+            RECTS.with(|rects| {
+                let mut rects = rects.borrow_mut();
+                match rects.iter_mut().find(|(known, _)| *known == widget) {
+                    Some(entry) => entry.1 = rect,
+                    None => rects.push((widget, rect)),
+                }
+            });
             view.show();
+            view.queue_resize();
             Ok(())
         })
     }
+
+    /// Unloads every web page, then calls `done` once their storage had time
+    /// to be written. Sites run their unload handlers only then: Discord, for
+    /// one, keeps its login token out of `localStorage` while the page is open
+    /// and writes it back on unload, so quitting without this logs the user out.
+    pub fn unload_all(done: impl FnOnce() + 'static) {
+        let views: Vec<WebView> = STATE.with(|state| {
+            state
+                .borrow()
+                .as_ref()
+                .map(|state| state.views.values().cloned().collect())
+                .unwrap_or_default()
+        });
+        if views.is_empty() {
+            done();
+            return;
+        }
+        let done = Rc::new(Cell::new(Some(done)));
+        // Called when every page is unloaded, or on timeout: whichever comes first.
+        let finish = {
+            let done = done.clone();
+            move || {
+                if let Some(done) = done.take() {
+                    glib::timeout_add_local_once(STORAGE_FLUSH, done);
+                }
+            }
+        };
+        let remaining = Rc::new(Cell::new(views.len()));
+        for view in views {
+            let remaining = remaining.clone();
+            let finish = finish.clone();
+            view.connect_load_changed(move |view, event| {
+                if event == LoadEvent::Finished && view.uri().as_deref() == Some("about:blank") {
+                    remaining.set(remaining.get().saturating_sub(1));
+                    if remaining.get() == 0 {
+                        finish();
+                    }
+                }
+            });
+            view.load_uri("about:blank");
+        }
+        glib::timeout_add_local_once(UNLOAD_TIMEOUT, finish);
+    }
+
+    /// Longest wait for pages to unload when quitting.
+    const UNLOAD_TIMEOUT: Duration = Duration::from_secs(3);
+    /// Time left to WebKit to write storage once pages are unloaded.
+    const STORAGE_FLUSH: Duration = Duration::from_millis(500);
 
     fn create(spec: &WebSpec, dirs: &DataDirs) -> WebView {
         let manager = WebsiteDataManager::builder()
@@ -132,8 +210,6 @@ mod linux {
         }
         let context = WebContext::with_website_data_manager(&manager);
         let view = WebView::with_context(&context);
-        view.set_halign(gtk::Align::Start);
-        view.set_valign(gtk::Align::Start);
         if let Some(settings) = WebViewExt::settings(&view) {
             settings.set_enable_developer_extras(false);
             settings.set_javascript_can_open_windows_automatically(false);
@@ -163,9 +239,35 @@ mod linux {
             }
             false
         });
+        // A crashed web process leaves the view blank: log why and reload it,
+        // a few times at most, so a page that always crashes does not loop.
+        let reloads = std::cell::Cell::new(0u8);
+        view.connect_web_process_terminated(move |view, reason| {
+            eprintln!(
+                "overquid: web panel process ended ({reason:?}) on {}",
+                view.uri().unwrap_or_default()
+            );
+            if reloads.get() < MAX_RELOADS {
+                reloads.set(reloads.get() + 1);
+                view.reload();
+            } else {
+                view.load_html(CRASHED_PAGE, None);
+            }
+        });
         view.load_uri(&spec.url);
         view
     }
+
+    /// How many times a crashed web panel is reloaded before giving up.
+    const MAX_RELOADS: u8 = 3;
+
+    /// Shown instead of a page that keeps crashing. The usual cause on Linux is
+    /// a missing GStreamer plugin: WebKit aborts when a page plays sound and
+    /// `autoaudiosink` (gst-plugins-good) is not installed.
+    const CRASHED_PAGE: &str = r#"<!doctype html><meta charset="utf-8">
+<body style="margin:0;display:grid;place-items:center;height:100vh;background:#0b0c11;color:#a2a6b4;font:14px/1.5 system-ui,sans-serif;text-align:center">
+<div style="max-width:32em;padding:16px"><p style="color:#e8e9ee;font-weight:600">This page keeps crashing.</p>
+<p>On Linux, this usually means GStreamer plugins are missing. Install <code>gst-plugins-good</code> (and <code>gst-libav</code> for video), then restart Overquid.</p></div>"#;
 
     fn open_externally(uri: &str) {
         if !(uri.starts_with("https://") || uri.starts_with("http://")) {
