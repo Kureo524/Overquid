@@ -110,6 +110,9 @@ refreshed daily. Its scriptlets (what removes YouTube's ads) are built from
 [uBlock Origin](https://github.com/gorhill/uBlock) (GPL-3.0) at build time and shipped as a separate data file; set
 `OVERQUID_SKIP_SCRIPTLETS=1` to build without them.
 
+On Hyprland, an overlay can follow the focused app: right-click its tab, "Use for <app>", and it comes forward whenever
+that app gets the focus (pinned panels included, even while the overlay is closed).
+
 Overlays (the tabs at the top of the overlay) can be switched from hotkeys too: `overquid next`, `overquid prev`,
 `overquid switch NAME`.
 

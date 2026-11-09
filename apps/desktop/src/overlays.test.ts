@@ -9,7 +9,9 @@ const {
   cycle,
   deleteOverlay,
   parseOverlays,
+  overlayForApp,
   removePanel,
+  toggleApp,
   renameOverlay,
   serializeOverlays,
   switchByName,
@@ -116,5 +118,22 @@ describe('panels of the active overlay', () => {
 
   it('keeps a panel already there when adding it again', () => {
     expect(activeOverlay(addPanels(two, { clock: panel(7) })).panels.clock).toEqual(panel(1));
+  });
+});
+
+describe('apps', () => {
+  it('binds an app to one overlay at a time, and unbinds it', () => {
+    const bound = toggleApp(two, 'work', 'code');
+    expect(overlayForApp(bound, 'Code')?.id).toBe('work');
+    const moved = toggleApp(bound, 'main', 'code');
+    expect(overlayForApp(moved, 'code')?.id).toBe('main');
+    expect(moved.overlays[1]).toEqual(two.overlays[1]);
+    expect(overlayForApp(toggleApp(moved, 'main', 'CODE'), 'code')).toBeUndefined();
+  });
+
+  it('keeps bound apps through a save', () => {
+    const bound = toggleApp(two, 'work', 'org.vinegarhq.Sober');
+    const value = JSON.parse(JSON.stringify(serializeOverlays(bound))) as unknown;
+    expect(parseOverlays(value).overlays).toEqual(bound);
   });
 });

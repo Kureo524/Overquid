@@ -1,3 +1,4 @@
+mod active_app;
 mod cli;
 mod content_filter;
 mod json_file;
@@ -390,6 +391,17 @@ fn refresh_content_filter_lists<R: Runtime>(app: tauri::AppHandle<R>) {
     });
 }
 
+/// Sent with an `active_app::ActiveApp` whenever another app gets the focus.
+const ACTIVE_APP_EVENT: &str = "active-app";
+
+/// The last focused app (not Overquid), for an interface that starts after it.
+struct LastActiveApp(std::sync::Mutex<Option<active_app::ActiveApp>>);
+
+#[tauri::command]
+fn active_app(last: State<'_, LastActiveApp>) -> Option<active_app::ActiveApp> {
+    last.0.lock().ok().and_then(|app| app.clone())
+}
+
 /// Sent with a `cli::OverlaySwitch` for `overquid next|prev|switch NAME`.
 const OVERLAY_SWITCH_EVENT: &str = "overlay-switch";
 
@@ -459,6 +471,14 @@ pub fn run() {
                 start_content_filter(app.handle(), Start::On);
             }
             refresh_content_filter_lists(app.handle().clone());
+            app.manage(LastActiveApp(std::sync::Mutex::new(None)));
+            let handle = app.handle().clone();
+            active_app::watch(move |focused| {
+                if let Ok(mut last) = handle.state::<LastActiveApp>().0.lock() {
+                    *last = Some(focused.clone());
+                }
+                let _ = handle.emit(ACTIVE_APP_EVENT, focused);
+            });
             #[cfg(target_os = "linux")]
             quit_on_signals(app.handle());
             apply(app.handle(), command);
@@ -478,7 +498,8 @@ pub fn run() {
             content_filter_status,
             set_content_filter,
             content_filter_exceptions,
-            set_site_filter
+            set_site_filter,
+            active_app
         ])
         .run(tauri::generate_context!())
         .expect("error while running Overquid");
