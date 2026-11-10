@@ -31,6 +31,40 @@ function formatSize(bytes: number): string {
 
 /** The folders from the scanned one down to the one shown. */
 let trail: SpaceNode[] = [];
+/** The folder that was scanned: the trail's names lead down from it. */
+let root = '';
+let opening = false;
+
+const pathOf = (nodes: SpaceNode[]) =>
+  [root.replace(/\/+$/, ''), ...nodes.slice(1).map((node) => node.name)].join('/');
+
+/** Goes into a folder, scanning it first if the first scan stopped above it. */
+async function open(item: SpaceNode) {
+  if (opening) return;
+  const from = trail;
+  if (item.children.length === 0) {
+    opening = true;
+    status.textContent = `Analysing ${item.name}…`;
+    try {
+      const scanned = await overquid.files.scan(pathOf([...trail, item]));
+      item.children = scanned.children;
+      item.size = scanned.size;
+    } catch (error) {
+      status.textContent = String(error).replace(/^.*Error: /, '');
+      return;
+    } finally {
+      opening = false;
+    }
+    // The user went elsewhere in the meantime.
+    if (trail !== from) return;
+    if (item.children.length === 0) {
+      status.textContent = `${item.name} is empty or cannot be read.`;
+      return;
+    }
+  }
+  trail = [...trail, item];
+  render();
+}
 
 /** Tiles smaller than this are not drawn: they could not be read. */
 const MIN_TILE = 4;
@@ -56,7 +90,7 @@ function render() {
     if (w < MIN_TILE || h < MIN_TILE) return;
     const tile = document.createElement('button');
     tile.type = 'button';
-    tile.className = item.children.length > 0 ? 'tile tile--dir' : 'tile';
+    tile.className = item.dir ? 'tile tile--dir' : 'tile';
     tile.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px`;
     tile.style.setProperty('--share', `${accentShare(rank, tiles.length)}%`);
     tile.title = `${item.name}: ${formatSize(item.size)}`;
@@ -68,11 +102,8 @@ function render() {
       size.textContent = formatSize(item.size);
       tile.append(name, size);
     }
-    if (item.children.length > 0) {
-      tile.addEventListener('click', () => {
-        trail = [...trail, item];
-        render();
-      });
+    if (item.dir) {
+      tile.addEventListener('click', () => void open(item));
     } else {
       tile.disabled = true;
     }
@@ -90,6 +121,7 @@ async function analyse() {
   try {
     const started = performance.now();
     trail = [await overquid.files.scan(path)];
+    root = path;
     render();
     status.textContent += ` · ${((performance.now() - started) / 1000).toFixed(1)} s`;
     overquid.storage.set('path', path).catch(() => undefined);
