@@ -43,6 +43,8 @@ interface PanelProps {
   /** The lines a moving panel sticks to, for as long as it does. */
   onGuides: (guides: Guide[]) => void;
   pinned: boolean;
+  /** The whole overlay stays on screen: the panel counts as pinned. */
+  kept: boolean;
   /** Called once a drag ends, with where the panel was dropped. */
   onPlace: (placement: Placement) => void;
   /** Called once a resize ends, with the new content size and placement. */
@@ -125,6 +127,7 @@ export function Panel({
   snap,
   onGuides,
   pinned,
+  kept,
   onPlace,
   onResize,
   maximized,
@@ -303,7 +306,7 @@ export function Panel({
         visibility: hidden ? 'hidden' : undefined,
       }}
       aria-hidden={hidden || undefined}
-      data-pinned={pinned}
+      data-pinned={pinned || kept}
       data-layer={maximized ? MAXIMIZED_LAYER : layer}
       data-hidden={hidden}
       onPointerDownCapture={onRaise}
