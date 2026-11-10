@@ -2,12 +2,13 @@ import { useLayoutEffect, useState } from 'react';
 import { geometryChanged } from '../geometry';
 import { Appearance } from './Appearance';
 import { General } from './General';
+import { ShortcutsSection } from './Shortcuts';
 import type { Settings, UpdateSettings } from './settings';
 
 /** In front of the panels and the overlay bar, behind menus. */
 export const SETTINGS_LAYER = 1_800_000;
 
-const TABS = ['General', 'Appearance'] as const;
+const TABS = ['General', 'Appearance', 'Shortcuts'] as const;
 type Tab = (typeof TABS)[number];
 
 interface SettingsWindowProps {
@@ -79,6 +80,14 @@ export function SettingsWindow({ settings, update, onClose }: SettingsWindowProp
           <Appearance
             theme={settings.theme}
             onChange={(theme) => update((current) => ({ ...current, theme }))}
+          />
+        )}
+        {tab === 'Shortcuts' && (
+          <ShortcutsSection
+            shortcuts={settings.shortcuts}
+            snap={settings.snap}
+            onShortcuts={(shortcuts) => update((current) => ({ ...current, shortcuts }))}
+            onSnap={(snap) => update((current) => ({ ...current, snap }))}
           />
         )}
       </div>

@@ -7,6 +7,7 @@ mod overlay;
 mod plugin_storage;
 mod plugins;
 mod settings;
+mod shortcuts;
 mod state;
 mod web_panels;
 #[cfg(target_os = "linux")]
@@ -439,14 +440,44 @@ fn active_app(last: State<'_, LastActiveApp>) -> Option<active_app::ActiveApp> {
     last.0.lock().ok().and_then(|app| app.clone())
 }
 
-/// Sent with a `cli::OverlaySwitch` for `overquid next|prev|switch NAME`.
-const OVERLAY_SWITCH_EVENT: &str = "overlay-switch";
+/// The global shortcut in effect (`None`: the desktop's own configuration).
+#[derive(Default)]
+struct GlobalShortcut(std::sync::Mutex<Option<shortcuts::Accel>>);
+
+/// Which desktop the global shortcut would be set up in.
+#[tauri::command]
+fn shortcut_desktop() -> shortcuts::Desktop {
+    shortcuts::detect_desktop()
+}
+
+/// Applies the settings' shortcuts, moving the global one if it changed.
+#[tauri::command(async)]
+fn set_shortcuts(
+    overlay: State<'_, Overlay>,
+    global: State<'_, GlobalShortcut>,
+    shortcuts: shortcuts::Shortcuts,
+) -> Result<(), String> {
+    overlay.set_keymap(shortcuts.keymap()?);
+    let next = shortcuts.toggle()?;
+    let mut current = global.0.lock().map_err(|error| error.to_string())?;
+    if *current != next {
+        shortcuts::apply_global(shortcuts::detect_desktop(), current.as_ref(), next.as_ref())?;
+        *current = next;
+    }
+    Ok(())
+}
+
+/// Lets keys reach the page while a new shortcut is being recorded.
+#[tauri::command]
+fn suspend_shortcuts(overlay: State<'_, Overlay>, suspended: bool) {
+    overlay.suspend_shortcuts(suspended);
+}
 
 fn apply<R: Runtime>(app: &tauri::AppHandle<R>, request: Request) {
     let command = match request {
         Request::Visibility(command) => command,
         Request::Overlay(switch) => {
-            if let Err(error) = app.emit(OVERLAY_SWITCH_EVENT, switch) {
+            if let Err(error) = app.emit(overlay::SWITCH_EVENT, switch) {
                 eprintln!("overquid: cannot switch overlay: {error}");
             }
             return;
@@ -517,12 +548,25 @@ pub fn run() {
             refresh_content_filter_lists(app.handle().clone());
             app.manage(LastActiveApp(std::sync::Mutex::new(None)));
             let handle = app.handle().clone();
-            active_app::watch(move |focused| {
-                if let Ok(mut last) = handle.state::<LastActiveApp>().0.lock() {
-                    *last = Some(focused.clone());
-                }
-                let _ = handle.emit(ACTIVE_APP_EVENT, focused);
-            });
+            let reloaded = app.handle().clone();
+            app.manage(GlobalShortcut::default());
+            active_app::watch(
+                move |focused| {
+                    if let Ok(mut last) = handle.state::<LastActiveApp>().0.lock() {
+                        *last = Some(focused.clone());
+                    }
+                    let _ = handle.emit(ACTIVE_APP_EVENT, focused);
+                },
+                move || {
+                    let global = reloaded.state::<GlobalShortcut>();
+                    let toggle = global.0.lock().ok().and_then(|toggle| toggle.clone());
+                    if let Some(toggle) = toggle
+                        && let Err(error) = shortcuts::reapply_global(&toggle)
+                    {
+                        eprintln!("overquid: cannot set the global shortcut again: {error}");
+                    }
+                },
+            );
             #[cfg(target_os = "linux")]
             quit_on_signals(app.handle());
             apply(app.handle(), command);
@@ -536,6 +580,9 @@ pub fn run() {
             save_layout,
             load_settings,
             save_settings,
+            shortcut_desktop,
+            set_shortcuts,
+            suspend_shortcuts,
             plugin_call,
             list_plugins,
             web_panel,

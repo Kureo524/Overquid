@@ -6,6 +6,17 @@ import { DEFAULT_THEME, isHex, type Theme } from '../theme';
 export interface Settings {
   theme: Theme;
   snap: SnapSettings;
+  shortcuts: Shortcuts;
+}
+
+/** Keyboard shortcuts (`Ctrl+Shift+X`); empty means none. */
+export interface Shortcuts {
+  /** Shows or hides the overlay from anywhere. `null`: left to the desktop's config. */
+  toggle: string | null;
+  close: string;
+  next: string;
+  prev: string;
+  settings: string;
 }
 
 /** When panels stick to each other and to the screen while moved or resized. */
@@ -25,6 +36,7 @@ export interface SnapSettings {
 export const DEFAULT_SETTINGS: Settings = {
   theme: DEFAULT_THEME,
   snap: { mode: 'hold', key: 'Control' },
+  shortcuts: { toggle: null, close: 'Escape', next: '', prev: '', settings: '' },
 };
 
 export const SETTINGS_VERSION = 1;
@@ -57,9 +69,28 @@ function parseSnap(value: unknown): SnapSettings {
   };
 }
 
+function parseShortcuts(value: unknown): Shortcuts {
+  const saved = isRecord(value) ? value : {};
+  const fallback = DEFAULT_SETTINGS.shortcuts;
+  const text = (entry: unknown, otherwise: string) =>
+    typeof entry === 'string' ? entry : otherwise;
+  return {
+    toggle: typeof saved.toggle === 'string' && saved.toggle ? saved.toggle : null,
+    // Always one way to close the overlay.
+    close: text(saved.close, fallback.close) || fallback.close,
+    next: text(saved.next, fallback.next),
+    prev: text(saved.prev, fallback.prev),
+    settings: text(saved.settings, fallback.settings),
+  };
+}
+
 export function parseSettings(value: unknown): Settings {
   const saved = isRecord(value) ? value : {};
-  return { theme: parseTheme(saved.theme), snap: parseSnap(saved.snap) };
+  return {
+    theme: parseTheme(saved.theme),
+    snap: parseSnap(saved.snap),
+    shortcuts: parseShortcuts(saved.shortcuts),
+  };
 }
 
 export const serializeSettings = (settings: Settings) => ({
