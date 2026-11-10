@@ -26,6 +26,46 @@ export interface Notification {
   body?: string;
 }
 
+export interface FileEntry {
+  name: string;
+  dir: boolean;
+  /** A symbolic link; `dir` and `size` describe what it points to. */
+  link: boolean;
+  size: number;
+  /** Seconds since 1970. */
+  modified: number | null;
+}
+
+export interface FolderListing {
+  path: string;
+  parent: string | null;
+  entries: FileEntry[];
+}
+
+export interface SpaceNode {
+  name: string;
+  size: number;
+  dir: boolean;
+  /** The largest ones only; `size` counts everything. */
+  children: SpaceNode[];
+}
+
+/**
+ * The user's files. Needs the `files` permission. Plugins see names, sizes and
+ * dates, never what is in a file, and can only delete by moving to the trash.
+ */
+export interface Files {
+  home(): Promise<string>;
+  list(path: string): Promise<FolderListing>;
+  /** Opens with the user's default application. */
+  open(path: string): Promise<void>;
+  rename(path: string, name: string): Promise<void>;
+  mkdir(path: string, name: string): Promise<void>;
+  trash(path: string): Promise<void>;
+  /** What takes up space under `path`. Can take a while on a large disk. */
+  scan(path: string): Promise<SpaceNode>;
+}
+
 export interface OverquidClient {
   /** Called each time the plugin's panel becomes visible. */
   onShow(callback: () => void): Unsubscribe;
@@ -46,6 +86,8 @@ export interface OverquidClient {
    * most 5 per minute.
    */
   notify(notification: Notification): Promise<void>;
+  /** The user's files. Needs the `files` permission. */
+  files: Files;
   /** Raw call to a core method. Prefer the typed helpers. */
   call<T = unknown>(method: string, args?: unknown): Promise<T>;
 }
@@ -111,6 +153,23 @@ export function createClient(transport: Transport): OverquidClient {
     call,
     notify: async ({ title, body }) => {
       await call('notify', { title, body });
+    },
+    files: {
+      home: () => call<string>('files.home'),
+      list: (path) => call<FolderListing>('files.list', { path }),
+      open: async (path) => {
+        await call('files.open', { path });
+      },
+      rename: async (path, name) => {
+        await call('files.rename', { path, name });
+      },
+      mkdir: async (path, name) => {
+        await call('files.mkdir', { path, name });
+      },
+      trash: async (path) => {
+        await call('files.trash', { path });
+      },
+      scan: (path) => call<SpaceNode>('files.scan', { path }),
     },
     storage: {
       get: async <T extends Json>(key: string) => {

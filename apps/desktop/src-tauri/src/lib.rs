@@ -2,6 +2,7 @@ mod active_app;
 mod catalog;
 mod cli;
 mod content_filter;
+mod files;
 mod json_file;
 mod layout;
 mod overlay;

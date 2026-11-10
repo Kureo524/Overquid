@@ -25,6 +25,8 @@ pub enum Permission {
     Notifications,
     Context,
     Events,
+    /// Browse and organise the user's files (ADR 0012).
+    Files,
 }
 
 /// Where a plugin's panel goes until the user moves it.
@@ -349,6 +351,7 @@ pub fn call(
             Some(Permission::Storage)
         }
         "notify" => Some(Permission::Notifications),
+        other if other.starts_with("files.") => Some(Permission::Files),
         other => return Err(format!("unknown method '{other}'")),
     };
     if let Some(permission) = required
@@ -393,6 +396,7 @@ pub fn call(
             // for another one, or for the system.
             (host.notify)(&format!("{} · {title}", manifest.name), &body).map(|()| Value::Null)
         }
+        other if other.starts_with("files.") => crate::files::call(other, args),
         _ => unreachable!("methods are matched above"),
     }
 }
@@ -703,6 +707,8 @@ mod tests {
         let denied = call(&manifest, &storage, "storage.set", &set).unwrap_err();
         assert!(denied.contains("storage permission"), "{denied}");
         assert!(call(&manifest, &storage, "fs.read", &json!({})).is_err());
+        let files = call(&manifest, &storage, "files.home", &json!({})).unwrap_err();
+        assert!(files.contains("files permission"), "{files}");
         assert_eq!(
             call(&manifest, &storage, "echo", &json!(1)).unwrap()["pluginId"],
             "com.example.notes"
