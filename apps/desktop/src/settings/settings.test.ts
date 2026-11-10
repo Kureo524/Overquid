@@ -27,6 +27,13 @@ describe('settings', () => {
     expect(parseSettings({ snap: { mode: 'x', key: 3 } }).snap).toEqual(DEFAULT_SETTINGS.snap);
   });
 
+  it('reads the shortcuts and always keeps a way to close', () => {
+    const parsed = parseSettings({
+      shortcuts: { toggle: 'Super+O', close: '', next: 3 },
+    }).shortcuts;
+    expect(parsed).toEqual({ ...DEFAULT_SETTINGS.shortcuts, toggle: 'Super+O' });
+  });
+
   it('round-trips', () => {
     expect(parseSettings(serializeSettings(DEFAULT_SETTINGS))).toEqual(DEFAULT_SETTINGS);
   });

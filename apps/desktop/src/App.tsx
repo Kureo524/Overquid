@@ -46,6 +46,7 @@ import { WebSlot } from './WebSlot';
 import { broadcastTheme, listPlugins, startBroker, type PluginManifest } from './plugins';
 import { SettingsWindow } from './settings/SettingsWindow';
 import { useSettings } from './settings/settings';
+import { applyShortcuts } from './settings/shortcuts';
 import type { Guide } from './snap';
 import { applyTheme, themeTokens } from './theme';
 
@@ -289,6 +290,15 @@ export function App() {
   useEffect(() => {
     if (!summoned) setSettingsOpen(false);
   }, [summoned]);
+
+  useEffect(() => {
+    applyShortcuts(settings.shortcuts);
+  }, [settings.shortcuts]);
+
+  useEffect(() => {
+    const stop = listen('open-settings', () => setSettingsOpen((open) => !open));
+    return () => void stop.then((unlisten) => unlisten());
+  }, []);
 
   useEffect(() => {
     const tokens = themeTokens(settings.theme);

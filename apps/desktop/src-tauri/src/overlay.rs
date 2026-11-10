@@ -11,11 +11,16 @@ use std::sync::Mutex;
 use serde::Serialize;
 use tauri::{Emitter, Runtime, WebviewWindow};
 
-use crate::cli::Command;
+use crate::cli::{Command, OverlaySwitch};
+use crate::shortcuts::{Action, Keymap};
 use crate::state::{self, Rect, Visibility};
 
 /// Event sent to the web view each time the visibility changes.
 pub const STATE_EVENT: &str = "overlay-state";
+/// Sent with a `cli::OverlaySwitch` to change the active overlay.
+pub const SWITCH_EVENT: &str = "overlay-switch";
+/// Sent when the shortcut that opens the settings is pressed.
+const SETTINGS_EVENT: &str = "open-settings";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -38,6 +43,11 @@ pub struct Overlay {
 struct Inner {
     visibility: Visibility,
     pinned: Vec<Rect>,
+    keymap: Keymap,
+    /// While a shortcut is being recorded, keys go to the page.
+    shortcuts_suspended: bool,
+    /// The shortcut held down, run once its key is released.
+    pressed: Option<Action>,
 }
 
 impl Overlay {
@@ -46,7 +56,7 @@ impl Overlay {
         let mode = platform_setup(window)?;
         #[cfg(target_os = "linux")]
         {
-            handle_escape(window)?;
+            handle_shortcuts(window)?;
             crate::web_panels::install(&window.gtk_window()?);
         }
         Ok(Self {
@@ -54,6 +64,9 @@ impl Overlay {
             inner: Mutex::new(Inner {
                 visibility: Visibility::Hidden,
                 pinned: Vec::new(),
+                keymap: Keymap::default(),
+                shortcuts_suspended: false,
+                pressed: None,
             }),
         })
     }
@@ -116,6 +129,30 @@ impl Overlay {
             self.dismiss(window)
         } else {
             self.release_keyboard(window)
+        }
+    }
+
+    pub fn set_keymap(&self, keymap: Keymap) {
+        self.lock().keymap = keymap;
+    }
+
+    /// Stops reading shortcuts while one is being recorded.
+    pub fn suspend_shortcuts(&self, suspended: bool) {
+        let mut inner = self.lock();
+        inner.shortcuts_suspended = suspended;
+        inner.pressed = None;
+    }
+
+    fn run_action<R: Runtime>(
+        &self,
+        window: &WebviewWindow<R>,
+        action: Action,
+    ) -> tauri::Result<()> {
+        match action {
+            Action::Close => self.escape(window),
+            Action::NextOverlay => window.emit(SWITCH_EVENT, OverlaySwitch::Next),
+            Action::PreviousOverlay => window.emit(SWITCH_EVENT, OverlaySwitch::Prev),
+            Action::Settings => window.emit(SETTINGS_EVENT, ()),
         }
     }
 
@@ -209,37 +246,58 @@ fn platform_setup<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<Mode> 
     Ok(Mode::Fallback)
 }
 
-/// Escape is handled on the GTK window, before WebKit: a key typed while a
+/// Shortcuts are read on the GTK window, before WebKit: a key typed while a
 /// plugin's iframe has the focus never reaches the overlay's own page.
 ///
-/// Both press and release are consumed. Acting on the release matters:
+/// Both press and release are consumed, and the action runs on the release:
 /// hiding on the press unmaps the window before the release arrives (see the
-/// Escape fix in #11). Hiding the press from WebKit matters too: a press
-/// without its release leaves WebKit thinking Escape is still held.
+/// Escape fix in #11), and a press without its release leaves WebKit thinking
+/// the key is still held.
 #[cfg(target_os = "linux")]
-fn handle_escape<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<()> {
-    use gtk::gdk::keys::constants::Escape;
+fn handle_shortcuts<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<()> {
+    use gtk::gdk::ModifierType;
     use gtk::glib::Propagation;
     use gtk::prelude::*;
     use tauri::Manager;
 
+    use crate::shortcuts::Mods;
+
     let gtk_window = window.gtk_window()?;
-    gtk_window.connect_key_press_event(|_, event| {
-        if event.keyval() == Escape {
-            Propagation::Stop
-        } else {
-            Propagation::Proceed
+    let source = window.clone();
+    gtk_window.connect_key_press_event(move |_, event| {
+        let Some(overlay) = source.try_state::<Overlay>() else {
+            return Propagation::Proceed;
+        };
+        let state = event.state();
+        let mods = Mods {
+            ctrl: state.contains(ModifierType::CONTROL_MASK),
+            shift: state.contains(ModifierType::SHIFT_MASK),
+            alt: state.contains(ModifierType::MOD1_MASK),
+            logo: state.intersects(ModifierType::SUPER_MASK | ModifierType::MOD4_MASK),
+        };
+        let name = event.keyval().to_lower().name().unwrap_or_default();
+        let mut inner = overlay.lock();
+        if inner.shortcuts_suspended {
+            return Propagation::Proceed;
+        }
+        match inner.keymap.action(&name, mods) {
+            Some(action) => {
+                inner.pressed = Some(action);
+                Propagation::Stop
+            }
+            None => Propagation::Proceed,
         }
     });
     let target = window.clone();
-    gtk_window.connect_key_release_event(move |_, event| {
-        if event.keyval() != Escape {
+    gtk_window.connect_key_release_event(move |_, _| {
+        let Some(overlay) = target.try_state::<Overlay>() else {
             return Propagation::Proceed;
-        }
-        if let Some(overlay) = target.try_state::<Overlay>()
-            && let Err(error) = overlay.escape(&target)
-        {
-            eprintln!("overquid: Escape failed: {error}");
+        };
+        let Some(action) = overlay.lock().pressed.take() else {
+            return Propagation::Proceed;
+        };
+        if let Err(error) = overlay.run_action(&target, action) {
+            eprintln!("overquid: shortcut failed: {error}");
         }
         Propagation::Stop
     });
