@@ -113,14 +113,52 @@ function parseSize(value: unknown): Size | null {
 /** Smallest size a panel can be resized to (panel width, content height). */
 export const MIN_SIZE: Size = { width: 160, height: 60 };
 
-/** Clamps a content size between `MIN_SIZE` and `max`. */
-export function clampSize(size: Size, max: Size): Size {
-  const clamp = (value: number, min: number, limit: number) =>
-    Math.round(Math.max(min, Math.min(value, Math.max(min, limit))));
-  return {
-    width: clamp(size.width, MIN_SIZE.width, max.width),
-    height: clamp(size.height, MIN_SIZE.height, max.height),
-  };
+/** A panel's outer rectangle. */
+export interface Box extends Position, Size {}
+
+/** The side or corner a panel is resized from. */
+export type ResizeEdge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
+
+export const RESIZE_EDGES: ResizeEdge[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
+
+/**
+ * `start` and `length` of a span whose `moving` end was dragged by `delta`.
+ * The other end stays put; the span keeps at least `min` and stays on an axis
+ * of `limit` (it may be below `min` if the axis is that small).
+ */
+function resizeSpan(
+  start: number,
+  length: number,
+  moving: 'start' | 'end',
+  delta: number,
+  min: number,
+  limit: number,
+): { start: number; length: number } {
+  const clamp = (value: number, max: number) => Math.round(Math.max(min, Math.min(value, max)));
+  if (moving === 'end') return { start, length: clamp(length + delta, limit - start) };
+  const end = start + length;
+  const next = clamp(length - delta, end);
+  return { start: end - next, length: next };
+}
+
+/** `from` resized from `edge` by a pointer that moved by (`dx`, `dy`). */
+export function resizeBox(
+  from: Box,
+  edge: ResizeEdge,
+  dx: number,
+  dy: number,
+  min: Size,
+  viewport: Size,
+): Box {
+  const h = edge.includes('e') ? 'end' : edge.includes('w') ? 'start' : null;
+  const v = edge.includes('s') ? 'end' : edge.includes('n') ? 'start' : null;
+  const across = h
+    ? resizeSpan(from.x, from.width, h, dx, min.width, viewport.width)
+    : { start: from.x, length: from.width };
+  const down = v
+    ? resizeSpan(from.y, from.height, v, dy, min.height, viewport.height)
+    : { start: from.y, length: from.height };
+  return { x: across.start, y: down.start, width: across.length, height: down.length };
 }
 
 /** Reads a saved layout, dropping anything malformed instead of failing. */

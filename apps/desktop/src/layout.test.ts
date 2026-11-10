@@ -3,12 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
 const {
-  clampSize,
   isInFront,
   layerOf,
   migrateLayout,
   restack,
   parseLayout,
+  resizeBox,
   serializeLayout,
   toPlacement,
   toPosition,
@@ -106,17 +106,42 @@ describe('parseLayout', () => {
   });
 });
 
-describe('clampSize', () => {
-  it('keeps a size between the minimum and the screen', () => {
-    expect(clampSize({ width: 10, height: 5000 }, laptop)).toEqual({ width: 160, height: 1080 });
-    expect(clampSize({ width: 500.6, height: 300 }, laptop)).toEqual({ width: 501, height: 300 });
+describe('resizeBox', () => {
+  const from = { x: 100, y: 100, width: 400, height: 300 };
+  const min = { width: 160, height: 90 };
+
+  it('moves only the dragged sides', () => {
+    expect(resizeBox(from, 'e', 50, 999, min, laptop)).toEqual({ ...from, width: 450 });
+    expect(resizeBox(from, 's', 999, 50, min, laptop)).toEqual({ ...from, height: 350 });
+    expect(resizeBox(from, 'w', -50, 999, min, laptop)).toEqual({ ...from, x: 50, width: 450 });
+    expect(resizeBox(from, 'n', 999, -50, min, laptop)).toEqual({ ...from, y: 50, height: 350 });
   });
 
-  it('never goes below the minimum, even on a tiny screen', () => {
-    expect(clampSize({ width: 100, height: 100 }, { width: 50, height: 50 })).toEqual({
-      width: 160,
-      height: 60,
+  it('resizes both sides from a corner', () => {
+    expect(resizeBox(from, 'nw', 20, 30, min, laptop)).toEqual({
+      x: 120,
+      y: 130,
+      width: 380,
+      height: 270,
     });
+    expect(resizeBox(from, 'se', 20, 30, min, laptop)).toEqual({
+      x: 100,
+      y: 100,
+      width: 420,
+      height: 330,
+    });
+  });
+
+  it('keeps the opposite side in place at the minimum size', () => {
+    expect(resizeBox(from, 'w', 1000, 0, min, laptop)).toEqual({ ...from, x: 340, width: 160 });
+    expect(resizeBox(from, 'n', 0, 1000, min, laptop)).toEqual({ ...from, y: 310, height: 90 });
+  });
+
+  it('stops at the screen edges', () => {
+    expect(resizeBox(from, 'w', -1000, 0, min, laptop)).toEqual({ ...from, x: 0, width: 500 });
+    expect(resizeBox(from, 'e', 5000, 0, min, laptop)).toEqual({ ...from, width: 1820 });
+    expect(resizeBox(from, 'n', 0, -1000, min, laptop)).toEqual({ ...from, y: 0, height: 400 });
+    expect(resizeBox(from, 's', 0, 5000, min, laptop)).toEqual({ ...from, height: 980 });
   });
 });
 

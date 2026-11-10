@@ -65,7 +65,7 @@ body {
   justify-content: space-between;
   gap: 8px;
   height: 32px;
-  padding: 0 6px 0 14px;
+  padding: 0 12px 0 14px; /* Room for the top-right resize corner. */
   background: var(--glass);
   border-bottom: 1px solid var(--border);
   cursor: grab;
@@ -76,6 +76,8 @@ body {
 }
 
 .panel__actions {
+  position: relative;
+  z-index: 2; /* Above the resize handles. */
   display: flex;
   align-items: center;
   gap: 6px;
@@ -248,26 +250,127 @@ kbd {
   height: 100%;
 }
 
-.panel__resize {
+/* Resize handles sit in the panel's padding: they never cover its content. */
+.panel__edge {
   position: absolute;
-  right: 0;
-  bottom: 0;
-  width: 18px;
-  height: 18px;
-  cursor: nwse-resize;
+  z-index: 1;
   touch-action: none;
 }
 
-.panel__resize::after {
+.panel__edge--n,
+.panel__edge--s {
+  right: 16px;
+  left: 16px;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.panel__edge--e,
+.panel__edge--w {
+  top: 16px;
+  bottom: 16px;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.panel__edge--n {
+  top: 0;
+}
+
+.panel__edge--s {
+  bottom: 0;
+}
+
+.panel__edge--e {
+  right: 0;
+}
+
+.panel__edge--w {
+  left: 0;
+}
+
+.panel__edge--ne,
+.panel__edge--nw,
+.panel__edge--se,
+.panel__edge--sw {
+  width: 16px;
+  height: 16px;
+}
+
+.panel__edge--nw {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+}
+
+.panel__edge--se {
+  right: 0;
+  bottom: 0;
+  cursor: nwse-resize;
+}
+
+.panel__edge--ne {
+  top: 0;
+  right: 0;
+  cursor: nesw-resize;
+}
+
+.panel__edge--sw {
+  bottom: 0;
+  left: 0;
+  cursor: nesw-resize;
+}
+
+/* The mark follows the panel's rounded corner; it shows when the pointer is near. */
+.panel__edge--ne::after,
+.panel__edge--nw::after,
+.panel__edge--se::after,
+.panel__edge--sw::after {
   content: '';
   position: absolute;
-  right: 6px;
-  bottom: 6px;
-  width: 6px;
-  height: 6px;
-  border-right: 1.5px solid var(--text-3);
-  border-bottom: 1.5px solid var(--text-3);
-  border-bottom-right-radius: 2px;
+  width: 12px;
+  height: 12px;
+  border: 0 solid var(--text-2);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.panel__edge[data-near]::after {
+  opacity: 1;
+}
+
+.panel__edge:hover::after,
+.panel__edge:active::after {
+  border-color: var(--accent);
+  opacity: 1;
+}
+
+.panel__edge--nw::after {
+  top: 3px;
+  left: 3px;
+  border-width: 1.5px 0 0 1.5px;
+  border-top-left-radius: 15px;
+}
+
+.panel__edge--ne::after {
+  top: 3px;
+  right: 3px;
+  border-width: 1.5px 1.5px 0 0;
+  border-top-right-radius: 15px;
+}
+
+.panel__edge--sw::after {
+  bottom: 3px;
+  left: 3px;
+  border-width: 0 0 1.5px 1.5px;
+  border-bottom-left-radius: 15px;
+}
+
+.panel__edge--se::after {
+  right: 3px;
+  bottom: 3px;
+  border-width: 0 1.5px 1.5px 0;
+  border-bottom-right-radius: 15px;
 }
 
 .icon-button:disabled {
