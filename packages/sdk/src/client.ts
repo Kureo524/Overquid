@@ -31,6 +31,12 @@ export interface OverquidClient {
   onShow(callback: () => void): Unsubscribe;
   /** Called each time the plugin's panel is hidden. Pause timers and media here. */
   onHide(callback: () => void): Unsubscribe;
+  /**
+   * Called with the overlay's colours, as CSS custom properties (`--accent`,
+   * `--surface`…), now if they are known and on every change. `connect()`
+   * already applies them to the page: use `var(--accent, #8fa4cc)` in your CSS.
+   */
+  onTheme(callback: (tokens: Record<string, string>) => void): Unsubscribe;
   /** Whether the panel is visible right now. */
   readonly visible: boolean;
   /** Data of this plugin, kept by the core. Needs the `storage` permission. */
@@ -55,10 +61,17 @@ export function createClient(transport: Transport): OverquidClient {
     { resolve: (value: unknown) => void; reject: (error: Error) => void }
   >();
   const listeners = { show: new Set<() => void>(), hide: new Set<() => void>() };
+  const themeListeners = new Set<(tokens: Record<string, string>) => void>();
+  let theme: Record<string, string> | undefined;
   let visible = false;
 
   transport.listen((data) => {
     if (isEvent(data)) {
+      if (data.event === 'theme') {
+        theme = data.tokens;
+        for (const callback of themeListeners) callback(data.tokens);
+        return;
+      }
       visible = data.event === 'show';
       for (const callback of listeners[data.event]) callback();
       return;
@@ -87,6 +100,11 @@ export function createClient(transport: Transport): OverquidClient {
   return {
     onShow: (callback) => subscribe('show', callback),
     onHide: (callback) => subscribe('hide', callback),
+    onTheme: (callback) => {
+      themeListeners.add(callback);
+      if (theme) callback(theme);
+      return () => themeListeners.delete(callback);
+    },
     get visible() {
       return visible;
     },
@@ -114,13 +132,19 @@ let client: OverquidClient | undefined;
 
 /** The client of this plugin, talking to the overlay that embeds it. */
 export function connect(): OverquidClient {
-  client ??= createClient({
+  if (client) return client;
+  client = createClient({
     post: (message) => window.parent.postMessage(message, '*'),
     listen: (handler) =>
       window.addEventListener('message', (event) => {
         // Only the overlay that embeds the plugin may talk to it.
         if (event.source === window.parent) handler(event.data);
       }),
+  });
+  client.onTheme((tokens) => {
+    for (const [name, value] of Object.entries(tokens)) {
+      document.documentElement.style.setProperty(name, value);
+    }
   });
   return client;
 }

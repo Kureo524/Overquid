@@ -1,5 +1,11 @@
 import { useEffect, useRef } from 'react';
-import { pluginUrl, registerFrame, sendVisibility, type PluginManifest } from './plugins';
+import {
+  pluginUrl,
+  registerFrame,
+  sendTheme,
+  sendVisibility,
+  type PluginManifest,
+} from './plugins';
 
 interface PluginFrameProps {
   plugin: PluginManifest;
@@ -27,7 +33,9 @@ export function PluginFrame({ plugin, visible }: PluginFrameProps) {
   // A freshly loaded document has missed earlier events: tell it where it stands.
   const onLoad = () => {
     const frame = ref.current?.contentWindow;
-    if (frame) sendVisibility(frame, visibleRef.current);
+    if (!frame) return;
+    sendVisibility(frame, visibleRef.current);
+    sendTheme(frame);
   };
 
   return (
