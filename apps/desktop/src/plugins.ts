@@ -44,6 +44,7 @@ export function pluginUrl(id: string, path: string): string {
  * nothing a plugin puts in its payload is used to identify it.
  */
 const frames = new Map<MessageEventSource, string>();
+let theme: Record<string, string> = {};
 
 // The iframe's origin is opaque ("null"): '*' is the only possible target,
 // and every message goes to one exact window.
@@ -58,6 +59,17 @@ export function registerFrame(frame: Window, pluginId: string): () => void {
 /** Tells a plugin whether its panel is on screen. */
 export function sendVisibility(frame: Window, visible: boolean) {
   send(frame, { overquid: PROTOCOL, event: visible ? 'show' : 'hide' });
+}
+
+/** Tells a plugin the overlay's colours; the SDK applies them to its page. */
+export function sendTheme(frame: Window) {
+  send(frame, { overquid: PROTOCOL, event: 'theme', tokens: theme });
+}
+
+/** Applies new colours to every plugin. */
+export function broadcastTheme(tokens: Record<string, string>) {
+  theme = tokens;
+  for (const frame of frames.keys()) sendTheme(frame as Window);
 }
 
 export function startBroker(): () => void {

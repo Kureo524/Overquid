@@ -6,6 +6,7 @@ mod layout;
 mod overlay;
 mod plugin_storage;
 mod plugins;
+mod settings;
 mod state;
 mod web_panels;
 #[cfg(target_os = "linux")]
@@ -16,6 +17,7 @@ use tauri::{Emitter, Manager, Runtime, State, WebviewWindow};
 use cli::{CliError, Request};
 use layout::LayoutStore;
 use overlay::{Overlay, Status};
+use settings::SettingsStore;
 use state::Rect;
 
 const WINDOW: &str = "overlay";
@@ -44,6 +46,19 @@ fn load_layout(store: State<'_, LayoutStore>) -> Option<serde_json::Value> {
 #[tauri::command(async)]
 fn save_layout(store: State<'_, LayoutStore>, layout: serde_json::Value) -> Result<(), String> {
     store.save(&layout)
+}
+
+#[tauri::command(async)]
+fn load_settings(store: State<'_, SettingsStore>) -> Option<serde_json::Value> {
+    store.load()
+}
+
+#[tauri::command(async)]
+fn save_settings(
+    store: State<'_, SettingsStore>,
+    settings: serde_json::Value,
+) -> Result<(), String> {
+    store.save(&settings)
 }
 
 /// Gives the keyboard back to the app underneath (pinned panels only).
@@ -477,6 +492,7 @@ pub fn run() {
                 .get_webview_window(WINDOW)
                 .expect("overlay window is declared in tauri.conf.json");
             app.manage(LayoutStore::new(&app.path().app_config_dir()?));
+            app.manage(SettingsStore::new(&app.path().app_config_dir()?));
             // Notifications: 5 per minute per plugin.
             app.manage(plugins::RateLimiter::new(
                 5,
@@ -518,6 +534,8 @@ pub fn run() {
             release_keyboard,
             load_layout,
             save_layout,
+            load_settings,
+            save_settings,
             plugin_call,
             list_plugins,
             web_panel,

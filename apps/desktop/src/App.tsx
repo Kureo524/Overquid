@@ -43,7 +43,10 @@ import { Browser } from './Browser';
 import { Panel, type LayerAction } from './Panel';
 import { PluginFrame } from './PluginFrame';
 import { WebSlot } from './WebSlot';
-import { listPlugins, startBroker, type PluginManifest } from './plugins';
+import { broadcastTheme, listPlugins, startBroker, type PluginManifest } from './plugins';
+import { SettingsWindow } from './settings/SettingsWindow';
+import { useSettings } from './settings/settings';
+import { applyTheme, themeTokens } from './theme';
 
 const modeLabel: Record<OverlayMode, string> = {
   'layer-shell': 'Wayland layer-shell',
@@ -211,6 +214,8 @@ export function App() {
   // The panel shown full screen. Not saved: it only lasts while the overlay is
   // summoned, so a pinned panel never takes the whole screen over a game.
   const [maximized, setMaximized] = useState<PanelId | null>(null);
+  const [settings, updateSettings] = useSettings();
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const lastRegions = useRef<Rect[] | null>(null);
   const restorePending = useRef(true);
 
@@ -277,6 +282,17 @@ export function App() {
       document.activeElement.blur();
     }
   }, [summoned]);
+
+  // The overlay opens on the panels, whatever was open when it was closed.
+  useEffect(() => {
+    if (!summoned) setSettingsOpen(false);
+  }, [summoned]);
+
+  useEffect(() => {
+    const tokens = themeTokens(settings.theme);
+    applyTheme(tokens, document.documentElement);
+    broadcastTheme(tokens);
+  }, [settings.theme]);
 
   // Escape is handled by the core on the GTK window (it must also work while
   // a plugin's iframe has the focus, which this page cannot see).
@@ -351,6 +367,7 @@ export function App() {
           overlays={overlays.overlays}
           active={overlays.active}
           addable={addable}
+          onSettings={() => setSettingsOpen((open) => !open)}
           onSwitch={(id) => changeOverlays({ ...overlays, active: id })}
           onCreate={() => changeOverlays(createOverlay(overlays))}
           onRename={(id, name) => commit(renameOverlay(overlays, id, name))}
@@ -365,6 +382,13 @@ export function App() {
                 : 0;
             commit(addPanels(overlays, { [id]: { ...defaults(id), z } }));
           }}
+        />
+      )}
+      {summoned && settingsOpen && (
+        <SettingsWindow
+          settings={settings}
+          update={updateSettings}
+          onClose={() => setSettingsOpen(false)}
         />
       )}
       {visible('welcome') && (

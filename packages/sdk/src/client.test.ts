@@ -103,3 +103,25 @@ describe('lifecycle', () => {
     expect(seen).toEqual(['show', 'hide']);
   });
 });
+
+describe('theme', () => {
+  it('reports the colours now if known, and on every change', () => {
+    const host = fakeHost();
+    const client = createClient(host.transport);
+    const seen: unknown[] = [];
+    host.raw({ overquid: 1, event: 'theme', tokens: { '--accent': '#111111' } });
+    const stop = client.onTheme((tokens) => seen.push(tokens['--accent']));
+    host.raw({ overquid: 1, event: 'theme', tokens: { '--accent': '#222222' } });
+    stop();
+    host.raw({ overquid: 1, event: 'theme', tokens: { '--accent': '#333333' } });
+    expect(seen).toEqual(['#111111', '#222222']);
+  });
+
+  it('does not change the visibility', () => {
+    const host = fakeHost();
+    const client = createClient(host.transport);
+    host.event('show');
+    host.raw({ overquid: 1, event: 'theme', tokens: {} });
+    expect(client.visible).toBe(true);
+  });
+});

@@ -64,7 +64,7 @@ label span {
   overflow-wrap: anywhere;
 }
 input[type='checkbox'] {
-  accent-color: #8fa4cc;
+  accent-color: var(--accent, #8fa4cc);
 }
 li.done span {
   color: #868a98;

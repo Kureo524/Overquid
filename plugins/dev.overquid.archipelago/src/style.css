@@ -32,7 +32,7 @@ input {
   transition: border-color 0.12s;
 }
 input:focus {
-  border-color: #8fa4cc;
+  border-color: var(--accent, #8fa4cc);
 }
 input:disabled {
   opacity: 0.5;
@@ -43,7 +43,7 @@ input::placeholder {
 input[type='checkbox'] {
   width: auto;
   height: auto;
-  accent-color: #8fa4cc;
+  accent-color: var(--accent, #8fa4cc);
 }
 button {
   height: 28px;
@@ -94,11 +94,11 @@ button.ghost:hover {
 }
 #connect {
   border-color: rgba(255, 255, 255, 0.28);
-  background: rgba(143, 164, 204, 0.42);
+  background: var(--accent-tint, rgba(143, 164, 204, 0.42));
   color: #fff;
 }
 #connect:hover {
-  background: rgba(143, 164, 204, 0.55);
+  background: color-mix(in srgb, var(--accent, #8fa4cc) 55%, transparent);
 }
 #connect:disabled {
   cursor: default;
@@ -217,7 +217,7 @@ header {
   color: #a2a6b4;
 }
 .tabs button[aria-selected='true'] {
-  background: rgba(143, 164, 204, 0.14);
+  background: var(--accent-soft, rgba(143, 164, 204, 0.14));
   color: #e6eaf2;
 }
 .feed {
@@ -256,7 +256,7 @@ header {
   font-weight: 600;
 }
 .self {
-  color: #adbfe0;
+  color: var(--accent-text, #adbfe0);
   font-weight: 600;
 }
 .item {
@@ -266,7 +266,7 @@ header {
   color: #e6eaf2;
 }
 .item.progression {
-  color: #adbfe0;
+  color: var(--accent-text, #adbfe0);
   font-weight: 600;
 }
 .item.trap {
