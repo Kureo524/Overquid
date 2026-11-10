@@ -1,5 +1,12 @@
-import { useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode } from 'react';
-import { geometryChanged } from './geometry';
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type PointerEvent,
+  type ReactNode,
+} from 'react';
+import { geometryChanged, layoutRect } from './geometry';
 import { Menu } from './Menu';
 import {
   MAXIMIZED_LAYER,
@@ -14,6 +21,8 @@ import {
   type ResizeEdge,
   type Size,
 } from './layout';
+import type { Modifier, SnapSettings } from './settings/settings';
+import { snapMove, snapResize, type Guide } from './snap';
 
 /** A layer menu entry. */
 export type LayerAction = 'front' | 'back' | 'toggle-on-top';
@@ -30,6 +39,9 @@ interface PanelProps {
   contentHeight?: number | undefined;
   placement: Placement;
   viewport: Size;
+  snap: SnapSettings;
+  /** The lines a moving panel sticks to, for as long as it does. */
+  onGuides: (guides: Guide[]) => void;
   pinned: boolean;
   /** Called once a drag ends, with where the panel was dropped. */
   onPlace: (placement: Placement) => void;
@@ -67,9 +79,30 @@ const NEAR_CORNER = 40;
 
 type Corner = 'ne' | 'nw' | 'se' | 'sw';
 
-type Gesture =
+/** Where a panel being moved or resized is, until the gesture ends. */
+interface Live {
+  position: Position;
+  content?: Size;
+}
+
+type GestureKind =
   | { kind: 'drag'; dx: number; dy: number }
   | { kind: 'resize'; edge: ResizeEdge; x: number; y: number; from: Box };
+
+type Gesture = GestureKind & {
+  /** Panels to snap to, measured when the gesture starts. */
+  others: Box[];
+  /** Last pointer position: pressing the snap key must apply without a move. */
+  pointer: Position;
+};
+
+/** The panels on screen other than `self`. */
+function otherPanels(self: HTMLElement | null): Box[] {
+  const panels = document.querySelectorAll<HTMLElement>('.panel[data-hidden="false"]');
+  return Array.from(panels)
+    .filter((panel) => panel !== self)
+    .map(layoutRect);
+}
 
 /** The corner of `box` within `NEAR_CORNER` of the point, if any. */
 function cornerNear(box: DOMRect, x: number, y: number): Corner | null {
@@ -89,6 +122,8 @@ export function Panel({
   contentHeight,
   placement,
   viewport,
+  snap,
+  onGuides,
   pinned,
   onPlace,
   onResize,
@@ -109,7 +144,13 @@ export function Panel({
   const [height, setHeight] = useState(0);
   // While dragging or resizing, the panel follows the pointer; the layout is
   // only updated (and saved) once the gesture ends.
-  const [live, setLive] = useState<{ position: Position; content?: Size } | null>(null);
+  const [live, setLiveState] = useState<Live | null>(null);
+  // Read when the gesture ends: the last move may not have rendered yet.
+  const liveNow = useRef<Live | null>(null);
+  const setLive = (next: Live | null) => {
+    liveNow.current = next;
+    setLiveState(next);
+  };
   const gesture = useRef<Gesture | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [near, setNear] = useState<Corner | null>(null);
@@ -144,8 +185,12 @@ export function Panel({
     ? { x: 0, y: 0 }
     : (live?.position ?? toPosition(placement, size, viewport));
 
-  const startGesture = (event: PointerEvent<HTMLElement>, next: Gesture) => {
-    gesture.current = next;
+  const startGesture = (event: PointerEvent<HTMLElement>, next: GestureKind) => {
+    gesture.current = {
+      ...next,
+      others: otherPanels(ref.current),
+      pointer: { x: event.clientX, y: event.clientY },
+    };
     event.currentTarget.setPointerCapture(event.pointerId);
   };
 
@@ -170,36 +215,72 @@ export function Panel({
     });
   };
 
-  const onMove = (event: PointerEvent<HTMLElement>) => {
+  /** Follows the pointer; `snapping` makes the panel stick to the closest lines. */
+  const follow = (pointer: Position, snapping: boolean) => {
     const current = gesture.current;
     if (!current) return;
+    current.pointer = pointer;
     if (current.kind === 'drag') {
-      const x = Math.round(event.clientX - current.dx);
-      const y = Math.round(event.clientY - current.dy);
+      const x = Math.round(pointer.x - current.dx);
+      const y = Math.round(pointer.y - current.dy);
       // Clamp through a placement round trip, so the panel cannot leave the screen.
-      setLive({ position: toPosition(toPlacement({ x, y }, size, viewport), size, viewport) });
+      const clamped = toPosition(toPlacement({ x, y }, size, viewport), size, viewport);
+      const snapped = snapping ? snapMove({ ...clamped, ...size }, current.others, viewport) : null;
+      setLive({ position: snapped ? { x: snapped.box.x, y: snapped.box.y } : clamped });
+      onGuides(snapped?.guides ?? []);
       return;
     }
-    const box = resizeBox(
+    const resized = resizeBox(
       current.from,
       current.edge,
-      event.clientX - current.x,
-      event.clientY - current.y,
+      pointer.x - current.x,
+      pointer.y - current.y,
       MIN_BOX,
       viewport,
     );
+    const snapped = snapping
+      ? snapResize(resized, current.edge, current.others, MIN_BOX, viewport)
+      : null;
+    const box = snapped?.box ?? resized;
     setLive({
       position: { x: box.x, y: box.y },
       content: { width: box.width - BORDER_WIDTH, height: box.height - CHROME_HEIGHT },
     });
+    onGuides(snapped?.guides ?? []);
   };
+
+  const isSnapping = (event: { getModifierState: (key: Modifier) => boolean }) =>
+    snap.mode === 'always' || (snap.mode === 'hold' && event.getModifierState(snap.key));
+
+  const onMove = (event: PointerEvent<HTMLElement>) =>
+    follow({ x: event.clientX, y: event.clientY }, isSnapping(event));
+
+  // Pressing or releasing the snap key during a gesture applies at once.
+  const onSnapKey = useRef<(event: KeyboardEvent) => void>(() => undefined);
+  onSnapKey.current = (event) => {
+    if (gesture.current) follow(gesture.current.pointer, isSnapping(event));
+  };
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => onSnapKey.current(event);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('keyup', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keyup', onKey);
+    };
+  }, []);
 
   const endGesture = () => {
     const current = gesture.current;
+    const last = liveNow.current;
     gesture.current = null;
-    if (!current || !live) return;
-    const placed = toPlacement(live.position, size, viewport);
-    if (current.kind === 'resize' && live.content) onResize?.(live.content, placed);
+    onGuides([]);
+    if (!current || !last) return;
+    const lastSize = last.content
+      ? { width: last.content.width + BORDER_WIDTH, height: last.content.height + CHROME_HEIGHT }
+      : size;
+    const placed = toPlacement(last.position, lastSize, viewport);
+    if (current.kind === 'resize' && last.content) onResize?.(last.content, placed);
     else onPlace(placed);
     setLive(null);
   };

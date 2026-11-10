@@ -706,3 +706,52 @@ kbd {
 .swatch[aria-pressed='true'] {
   border-color: var(--text);
 }
+
+.segmented {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 14px;
+  background: var(--glass);
+}
+
+.segmented__item {
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  cursor: pointer;
+}
+
+.segmented__item:hover {
+  color: var(--text);
+}
+
+.segmented__item[aria-checked='true'] {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+/* Guides of a panel being snapped. */
+.snap-guide {
+  position: absolute;
+  z-index: 1400000;
+  background: var(--accent);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.snap-guide--x {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.snap-guide--y {
+  right: 0;
+  left: 0;
+  height: 1px;
+}

@@ -19,6 +19,14 @@ describe('settings', () => {
     expect(parsed.theme).toEqual({ ...DEFAULT_SETTINGS.theme, accent: '#cf9bb3', glass: 0.7 });
   });
 
+  it('reads the snap settings', () => {
+    expect(parseSettings({ snap: { mode: 'always', key: 'Alt' } }).snap).toEqual({
+      mode: 'always',
+      key: 'Alt',
+    });
+    expect(parseSettings({ snap: { mode: 'x', key: 3 } }).snap).toEqual(DEFAULT_SETTINGS.snap);
+  });
+
   it('round-trips', () => {
     expect(parseSettings(serializeSettings(DEFAULT_SETTINGS))).toEqual(DEFAULT_SETTINGS);
   });
