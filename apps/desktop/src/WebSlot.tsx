@@ -1,7 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { listen } from '@tauri-apps/api/event';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { geometryChanged, holesAbove, layoutRect, onGeometryChange } from './geometry';
 import { instanceOf } from './instances';
+import { edgeGradient, sameEdges, type PageEdges } from './webEdges';
 
 interface WebSlotProps {
   /** The panel: the plugin's id, or `plugin#n` for another instance (ADR 0007). */
@@ -47,12 +49,41 @@ export function WebSlot({ panelId, name, visible }: WebSlotProps) {
     };
   }, [panelId]);
 
+  const [edges, setEdges] = useState<PageEdges | null>(null);
+  useEffect(() => {
+    const stop = listen<PageEdges>('web-panel-edges', ({ payload }) => {
+      if (payload.panelId !== panelId) return;
+      setEdges((known) => (known && sameEdges(known, payload) ? known : payload));
+    });
+    return () => void stop.then((unlisten) => unlisten());
+  }, [panelId]);
+
   // Own changes (visibility) count as a move too.
   useLayoutEffect(() => geometryChanged());
 
   return (
     <div ref={ref} className="web-slot mono">
       Loading {name}…
+      {edges && (
+        <>
+          <span
+            className="web-edge web-edge--top"
+            style={{ background: edgeGradient('to right', edges.top, 16) }}
+          />
+          <span
+            className="web-edge web-edge--bottom"
+            style={{ background: edgeGradient('to right', edges.bottom, 16) }}
+          />
+          <span
+            className="web-edge web-edge--left"
+            style={{ background: edgeGradient('to bottom', edges.left, 0) }}
+          />
+          <span
+            className="web-edge web-edge--right"
+            style={{ background: edgeGradient('to bottom', edges.right, 0) }}
+          />
+        </>
+      )}
     </div>
   );
 }
