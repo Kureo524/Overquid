@@ -43,7 +43,7 @@ Save several layouts ("Work", "Game") and bind them to the app in the foreground
 
 | Plugin      | What it is                                                                              |
 | ----------- | --------------------------------------------------------------------------------------- |
-| Clock       | Time at a glance; stops ticking while hidden                                            |
+| Clock       | Time at a glance, stopwatch, timer and alarms                                           |
 | Notes       | A scratchpad, saved as you type                                                         |
 | To-do       | Tasks to check off; clear the done ones in one click                                    |
 | Pomodoro    | 25 min focus, 5 min breaks (15 after four); a notification at each change, even hidden  |
@@ -51,6 +51,10 @@ Save several layouts ("Work", "Game") and bind them to the app in the foreground
 | YouTube     | The official YouTube site, in a panel; videos pause when the panel is hidden            |
 | Browser     | Any site in a panel: address bar (address or DuckDuckGo search), back, forward, reload  |
 | Archipelago | Text client for an Archipelago multiworld room: log, received items, hints, chat        |
+
+More plugins are available in the app, under Settings › Plugins: OBS (scenes, stream, recording, mute through
+obs-websocket), Files (a file manager) and Disk space (what takes up room, as a map of rectangles). What each one can
+access is shown before installing.
 
 The browser and YouTube can be opened several times ("Add panel" offers "Browser 2"); instances share their browsing
 data (one login) and each has its own page.
@@ -123,6 +127,10 @@ refreshed daily. Its scriptlets (what removes YouTube's ads) are built from
 
 On Hyprland, an overlay can follow the focused app: right-click its tab, "Use for <app>", and it comes forward whenever
 that app gets the focus (pinned panels included, even while the overlay is closed).
+
+Once the overlay runs, the shortcut can be changed in Settings › Shortcuts on Hyprland and GNOME. The same place sets
+the keys for closing, switching overlays and the key held to snap panels. `overquid keep` keeps the current overlay on
+screen after closing it, like the pin in the overlay bar.
 
 Overlays (the tabs at the top of the overlay) can be switched from hotkeys too: `overquid next`, `overquid prev`,
 `overquid switch NAME`.

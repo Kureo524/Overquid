@@ -33,6 +33,7 @@ await overquid.storage.set('count', count + 1);
 | ---------------------------------------------------------------------- | ----------------- |
 | `onShow`, `onHide`, `visible`                                          | none              |
 | `storage.get`, `set`, `remove`, `keys` (JSON values, 1 MiB per plugin) | `storage`         |
+| `files.home`, `list`, `open`, `rename`, `mkdir`, `trash`, `scan`       | `files`           |
 | `notify({ title, body })`: desktop notification, 5 per minute          | `notifications`   |
 | `fetch` and `WebSocket` (`https`, `wss`) to the hosts in `network`     | `network` entries |
 
