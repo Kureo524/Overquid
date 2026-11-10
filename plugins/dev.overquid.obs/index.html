@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>OBS</title>
+    <script type="module" src="./src/main.ts"></script>
+  </head>
+  <body>
+    <section id="connect" class="connect">
+      <p id="status" class="dim">Not connected</p>
+      <div class="row">
+        <label>Port <input id="port" type="number" min="1" max="65535" value="4455" /></label>
+        <label class="grow"
+          >Password <input id="password" type="password" autocomplete="off"
+        /></label>
+      </div>
+      <button id="connect-button" type="button" class="primary">Connect</button>
+      <p class="dim hint">In OBS: Tools › WebSocket Server Settings › Enable.</p>
+    </section>
+    <section id="controls" hidden>
+      <div class="row">
+        <button id="stream" type="button" class="output"></button>
+        <button id="record" type="button" class="output"></button>
+      </div>
+      <h2>Scenes</h2>
+      <ul id="scenes" class="list"></ul>
+      <h2>Audio</h2>
+      <ul id="inputs" class="list"></ul>
+      <button id="disconnect" type="button" class="link">Disconnect</button>
+    </section>
+  </body>
+</html>
