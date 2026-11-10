@@ -78,23 +78,87 @@ pub fn rounded_rectangles(
     parts
 }
 
-/// Width of the band where a page dissolves into its panel, in pixels.
-const FADE_WIDTH: f64 = 20.0;
-/// The panel's glass (`--surface` in the overlay's styles), which pages fade to.
-const FADE_COLOR: (f64, f64, f64) = (16.0 / 255.0, 18.0 / 255.0, 25.0 / 255.0);
-/// Gradient stops of the fade.
-const FADE_STOPS: u32 = 10;
+/// The colours along each edge of a page, `#rrggbb`, left to right and top
+/// to bottom: the panel around it blends into them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PageEdges {
+    pub panel_id: String,
+    pub top: Vec<String>,
+    pub right: Vec<String>,
+    pub bottom: Vec<String>,
+    pub left: Vec<String>,
+}
 
-/// Opacity of the fade along its band, as `(offset, alpha)` stops from the
-/// panel's side (opaque) to the page's (clear). An S curve: a straight ramp
-/// would show as a line where it stops.
-pub fn fade_stops() -> Vec<(f64, f64)> {
-    (0..=FADE_STOPS)
-        .map(|stop| {
-            let t = f64::from(stop) / f64::from(FADE_STOPS);
-            (t, 1.0 - t * t * (3.0 - 2.0 * t))
-        })
-        .collect()
+/// Colours read along each edge.
+const EDGE_SAMPLES: usize = 32;
+/// Thickness of the band read along each edge, in pixels: wide enough that a
+/// line of text across it does not decide the colour.
+const EDGE_BAND: usize = 3;
+
+/// Average colour of a rectangle of a cairo image (bytes B, G, R, A; pages
+/// are opaque, so the alpha is ignored), `#rrggbb`.
+fn average_color(
+    data: &[u8],
+    stride: usize,
+    (left, top): (usize, usize),
+    (right, bottom): (usize, usize),
+) -> String {
+    let (mut sum, mut count) = ([0u64; 3], 0u64);
+    for row in top..bottom {
+        let pixels = &data[row * stride + left * 4..row * stride + right * 4];
+        for [blue, green, red, _] in pixels.as_chunks::<4>().0 {
+            sum[0] += u64::from(*red);
+            sum[1] += u64::from(*green);
+            sum[2] += u64::from(*blue);
+            count += 1;
+        }
+    }
+    let count = count.max(1);
+    format!(
+        "#{:02x}{:02x}{:02x}",
+        sum[0] / count,
+        sum[1] / count,
+        sum[2] / count
+    )
+}
+
+/// Reads the colours along the four edges of a cairo image. `None` when the
+/// image is too small to read, or its buffer is not as described.
+pub fn sample_edges(
+    panel_id: &str,
+    data: &[u8],
+    stride: usize,
+    width: usize,
+    height: usize,
+) -> Option<PageEdges> {
+    if width < EDGE_SAMPLES
+        || height < EDGE_SAMPLES
+        || stride < width * 4
+        || data.len() < stride * height
+    {
+        return None;
+    }
+    let spans = |length: usize| {
+        (0..EDGE_SAMPLES).map(move |i| (i * length / EDGE_SAMPLES, (i + 1) * length / EDGE_SAMPLES))
+    };
+    let across = |top: usize| -> Vec<String> {
+        spans(width)
+            .map(|(a, b)| average_color(data, stride, (a, top), (b, top + EDGE_BAND)))
+            .collect()
+    };
+    let down = |left: usize| -> Vec<String> {
+        spans(height)
+            .map(|(a, b)| average_color(data, stride, (left, a), (left + EDGE_BAND, b)))
+            .collect()
+    };
+    Some(PageEdges {
+        panel_id: panel_id.to_owned(),
+        top: across(0),
+        right: down(width - EDGE_BAND),
+        bottom: across(height - EDGE_BAND),
+        left: down(0),
+    })
 }
 
 /// What a web panel reports to the overlay.
@@ -103,6 +167,8 @@ pub struct Hooks {
     pub on_change: Box<dyn Fn(PageState)>,
     /// The user pressed a mouse button in the view: its panel comes to the front.
     pub on_press: Box<dyn Fn()>,
+    /// New colours were read along the page's edges.
+    pub on_edges: Box<dyn Fn(PageEdges)>,
 }
 
 /// A browser button or address bar entry.
@@ -185,17 +251,17 @@ mod linux {
     use webkit2gtk::{
         CookieManagerExt, CookiePersistentStorage, LoadEvent, NavigationPolicyDecision,
         NavigationPolicyDecisionExt, NavigationType, PolicyDecisionExt, PolicyDecisionType,
-        SettingsExt, URIRequestExt, UserContentInjectedFrames, UserContentManagerExt, UserScript,
-        UserScriptInjectionTime, UserStyleLevel, UserStyleSheet, WebContext, WebView, WebViewExt,
-        WebsiteDataManager, WebsiteDataManagerExt,
+        SettingsExt, SnapshotOptions, SnapshotRegion, URIRequestExt, UserContentInjectedFrames,
+        UserContentManagerExt, UserScript, UserScriptInjectionTime, UserStyleLevel, UserStyleSheet,
+        WebContext, WebView, WebViewExt, WebsiteDataManager, WebsiteDataManagerExt,
     };
 
     use crate::content_filter::{Compiled, host_of, is_excepted, page_resources};
     use crate::webkit_filter;
 
     use super::{
-        DataDirs, FADE_COLOR, FADE_WIDTH, Hole, Hooks, Navigation, PAUSE_MEDIA, PageState,
-        fade_stops, rounded_rectangles,
+        DataDirs, Hole, Hooks, Navigation, PAUSE_MEDIA, PageEdges, PageState, rounded_rectangles,
+        sample_edges,
     };
     use crate::plugins::{WebSpec, host_allowed, https_host, resolve_input};
     use crate::state::Rect;
@@ -204,8 +270,6 @@ mod linux {
         overlay: gtk::Overlay,
         /// By panel id.
         views: HashMap<String, WebView>,
-        /// The layer that fades each view's edges, by panel id.
-        fades: HashMap<String, gtk::DrawingArea>,
         /// By plugin id: the instances of a plugin share its browsing data, and
         /// WebKit allows one data manager per directory.
         contexts: HashMap<String, WebContext>,
@@ -242,7 +306,6 @@ mod linux {
 
     struct Placed {
         view: gtk::Widget,
-        fade: gtk::Widget,
         rect: gtk::gdk::Rectangle,
         holes: Vec<gtk::cairo::RectangleInt>,
     }
@@ -262,7 +325,7 @@ mod linux {
                 rects
                     .borrow()
                     .iter()
-                    .find(|placed| placed.view == *widget || placed.fade == *widget)
+                    .find(|placed| placed.view == *widget)
                     .map(|placed| placed.rect)
             })
         });
@@ -274,7 +337,6 @@ mod linux {
             *state.borrow_mut() = Some(State {
                 overlay,
                 views: HashMap::new(),
-                fades: HashMap::new(),
                 contexts: HashMap::new(),
             });
         });
@@ -300,9 +362,6 @@ mod linux {
                     && view.is_visible()
                 {
                     view.hide();
-                    if let Some(fade) = state.fades.get(id) {
-                        fade.hide();
-                    }
                     if spec.pause_on_hide {
                         view.evaluate_javascript(
                             PAUSE_MEDIA,
@@ -327,14 +386,9 @@ mod linux {
                 filter_page(&view);
                 view.load_uri(&spec.url);
                 state.overlay.add_overlay(&view);
-                let fade = create_fade(&view);
-                state.overlay.add_overlay(&fade);
-                state.overlay.set_overlay_pass_through(&fade, true);
-                state.fades.insert(id.to_owned(), fade);
                 state.views.insert(id.to_owned(), view);
             }
             let view = &state.views[id];
-            let fade = &state.fades[id];
             let (x, y, width, height) = rect;
             let holes = holes
                 .iter()
@@ -354,7 +408,6 @@ mod linux {
                 .collect();
             let placed = Placed {
                 view: view.clone().upcast(),
-                fade: fade.clone().upcast(),
                 rect: gtk::gdk::Rectangle::new(x, y, width, height),
                 holes,
             };
@@ -367,68 +420,9 @@ mod linux {
             });
             view.show();
             view.queue_resize();
-            fade.show();
-            fade.queue_resize();
             cut(view.upcast_ref());
             Ok(())
         })
-    }
-
-    /// The layer over `view` that dissolves its edges into the panel, so the
-    /// page does not read as a window inside it. A widget of its own rather
-    /// than painting in the view's draw handler: GDK does not blend what is
-    /// drawn after WebKit's GL copy within the same widget. Nothing is changed
-    /// in the page itself, and clicks go through (`set_overlay_pass_through`).
-    fn create_fade(view: &WebView) -> gtk::DrawingArea {
-        let fade = gtk::DrawingArea::new();
-        // Like the view: shown only by `place`.
-        fade.set_no_show_all(true);
-        // A window of its own would catch every click, pass-through or not.
-        fade.set_has_window(false);
-        let page: gtk::Widget = view.clone().upcast();
-        fade.connect_draw(move |fade, cr| {
-            // Panels in front of the view hide its fade too.
-            if let Some(visible) = visible_region(&page) {
-                for index in 0..visible.num_rectangles() {
-                    let part = visible.rectangle(index);
-                    cr.rectangle(
-                        f64::from(part.x()),
-                        f64::from(part.y()),
-                        f64::from(part.width()),
-                        f64::from(part.height()),
-                    );
-                }
-                cr.clip();
-            }
-            paint_fade(
-                cr,
-                f64::from(fade.allocated_width()),
-                f64::from(fade.allocated_height()),
-            );
-            glib::Propagation::Proceed
-        });
-        fade
-    }
-
-    /// Four gradients, one per edge. Past its last stop a gradient is clear,
-    /// so each can be painted over the whole area.
-    fn paint_fade(cr: &gtk::cairo::Context, width: f64, height: f64) {
-        let band = FADE_WIDTH.min(width / 2.0).min(height / 2.0);
-        let (red, green, blue) = FADE_COLOR;
-        for (x0, y0, x1, y1) in [
-            (0.0, 0.0, 0.0, band),
-            (0.0, height, 0.0, height - band),
-            (0.0, 0.0, band, 0.0),
-            (width, 0.0, width - band, 0.0),
-        ] {
-            let gradient = gtk::cairo::LinearGradient::new(x0, y0, x1, y1);
-            for (offset, alpha) in fade_stops() {
-                gradient.add_color_stop_rgba(offset, red, green, blue, alpha);
-            }
-            if cr.set_source(&gradient).is_ok() {
-                let _ = cr.paint();
-            }
-        }
     }
 
     /// Cuts the panels in front out of the view for clicks: they reach the
@@ -486,11 +480,8 @@ mod linux {
         RECTS.with(|rects| rects.borrow_mut().retain(|placed| placed.view != widget));
         APPLIED.with(|applied| applied.borrow_mut().retain(|(known, _)| *known != view));
         STATE.with(|state| {
-            if let Some(state) = state.borrow_mut().as_mut() {
+            if let Some(state) = state.borrow().as_ref() {
                 state.overlay.remove(&view);
-                if let Some(fade) = state.fades.remove(id) {
-                    state.overlay.remove(&fade);
-                }
             }
         });
     }
@@ -523,7 +514,9 @@ mod linux {
         let Hooks {
             on_change,
             on_press,
+            on_edges,
         } = hooks;
+        watch_edges(view, id, on_edges);
         view.connect_button_press_event(move |_, _| {
             on_press();
             glib::Propagation::Proceed
@@ -579,6 +572,69 @@ mod linux {
         view.connect_is_loading_notify(on(&report));
         let report_load = on(&report);
         view.connect_load_changed(move |view, _| report_load(view));
+    }
+
+    /// How often the colours along a visible page's edges are read again.
+    const EDGE_PERIOD: Duration = Duration::from_secs(2);
+
+    /// Reports the colours along `view`'s edges when a page has loaded, then
+    /// regularly while the view is on screen (a site changes its look without
+    /// loading a page). Read from a snapshot: nothing runs in the page.
+    fn watch_edges(view: &WebView, id: &str, on_edges: Box<dyn Fn(PageEdges)>) {
+        let report: Rc<dyn Fn(&WebView)> = {
+            let on_edges: Rc<dyn Fn(PageEdges)> = Rc::from(on_edges);
+            let id = id.to_owned();
+            Rc::new(move |view: &WebView| {
+                if !view.is_visible() || view.is_loading() {
+                    return;
+                }
+                let (on_edges, id) = (on_edges.clone(), id.clone());
+                view.snapshot(
+                    SnapshotRegion::Visible,
+                    SnapshotOptions::NONE,
+                    None::<&gio::Cancellable>,
+                    move |snapshot| {
+                        if let Some(edges) = snapshot.ok().and_then(|s| read_edges(&id, s)) {
+                            on_edges(edges);
+                        }
+                    },
+                );
+            })
+        };
+        let loaded = report.clone();
+        view.connect_load_changed(move |view, event| {
+            if event == LoadEvent::Finished {
+                loaded(view);
+            }
+        });
+        let view = view.downgrade();
+        glib::timeout_add_local(EDGE_PERIOD, move || match view.upgrade() {
+            Some(view) => {
+                report(&view);
+                glib::ControlFlow::Continue
+            }
+            None => glib::ControlFlow::Break,
+        });
+    }
+
+    fn read_edges(id: &str, snapshot: gtk::cairo::Surface) -> Option<PageEdges> {
+        let image = gtk::cairo::ImageSurface::try_from(snapshot).ok()?;
+        if !matches!(
+            image.format(),
+            gtk::cairo::Format::ARgb32 | gtk::cairo::Format::Rgb24
+        ) {
+            return None;
+        }
+        let (stride, width, height) = (
+            usize::try_from(image.stride()).ok()?,
+            usize::try_from(image.width()).ok()?,
+            usize::try_from(image.height()).ok()?,
+        );
+        let mut edges = None;
+        image
+            .with_data(|data| edges = sample_edges(id, data, stride, width, height))
+            .ok()?;
+        edges
     }
 
     /// Unloads every web page, then calls `done` once their storage had time
@@ -942,7 +998,7 @@ mod linux {
 
 #[cfg(test)]
 mod tests {
-    use super::{fade_stops, rounded_rectangles};
+    use super::{rounded_rectangles, sample_edges};
 
     fn covers(parts: &[(i32, i32, i32, i32)], px: i32, py: i32) -> bool {
         parts
@@ -950,12 +1006,37 @@ mod tests {
             .any(|&(x, y, w, h)| px >= x && px < x + w && py >= y && py < y + h)
     }
 
+    /// A 40×40 B, G, R, A image: blue left half, red right half, a green top row.
+    fn half_and_half() -> Vec<u8> {
+        (0..40)
+            .flat_map(|y| {
+                (0..40).flat_map(move |x| match (y, x) {
+                    (0, _) => [0, 255, 0, 255],
+                    (_, 0..20) => [255, 0, 0, 255],
+                    _ => [0, 0, 255, 255],
+                })
+            })
+            .collect()
+    }
+
     #[test]
-    fn fade_goes_from_opaque_to_clear_without_steps_back() {
-        let stops = fade_stops();
-        assert_eq!(stops.first(), Some(&(0.0, 1.0)));
-        assert_eq!(stops.last(), Some(&(1.0, 0.0)));
-        assert!(stops.windows(2).all(|pair| pair[1].1 < pair[0].1));
+    fn edges_are_read_along_each_side_in_order() {
+        let edges = sample_edges("p", &half_and_half(), 160, 40, 40).unwrap();
+        assert_eq!(edges.panel_id, "p");
+        assert_eq!(edges.bottom.len(), 32);
+        assert_eq!(edges.bottom[0], "#0000ff");
+        assert_eq!(edges.bottom[31], "#ff0000");
+        assert_eq!(edges.left[31], "#0000ff");
+        assert_eq!(edges.right[31], "#ff0000");
+        // One green row in a band of three: averaged, not taken as is.
+        assert_eq!(edges.top[0], "#0055aa");
+    }
+
+    #[test]
+    fn edges_of_a_buffer_too_small_are_not_read() {
+        assert!(sample_edges("p", &[0; 16], 16, 4, 1).is_none());
+        assert!(sample_edges("p", &half_and_half(), 160, 40, 41).is_none());
+        assert!(sample_edges("p", &half_and_half(), 100, 40, 40).is_none());
     }
 
     #[test]
