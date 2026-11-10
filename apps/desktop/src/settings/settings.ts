@@ -7,6 +7,8 @@ export interface Settings {
   theme: Theme;
   snap: SnapSettings;
   shortcuts: Shortcuts;
+  /** Installed plugins the user switched off. */
+  disabledPlugins: string[];
 }
 
 /** Keyboard shortcuts (`Ctrl+Shift+X`); empty means none. */
@@ -37,6 +39,7 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: DEFAULT_THEME,
   snap: { mode: 'hold', key: 'Control' },
   shortcuts: { toggle: null, close: 'Escape', next: '', prev: '', settings: '' },
+  disabledPlugins: [],
 };
 
 export const SETTINGS_VERSION = 1;
@@ -90,6 +93,9 @@ export function parseSettings(value: unknown): Settings {
     theme: parseTheme(saved.theme),
     snap: parseSnap(saved.snap),
     shortcuts: parseShortcuts(saved.shortcuts),
+    disabledPlugins: Array.isArray(saved.disabledPlugins)
+      ? saved.disabledPlugins.filter((id): id is string => typeof id === 'string')
+      : [],
   };
 }
 

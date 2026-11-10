@@ -2,6 +2,7 @@
   "id": "dev.overquid.archipelago",
   "name": "Archipelago",
   "version": "1.0.0",
+  "description": "Text client for Archipelago multiworld games.",
   "entry": "dist/index.html",
   "panel": { "defaultSize": [380, 480], "position": "bottom-right" },
   "permissions": ["storage", "notifications"],

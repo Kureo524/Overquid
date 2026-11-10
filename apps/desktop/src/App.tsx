@@ -1,5 +1,5 @@
 import { listen } from '@tauri-apps/api/event';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   isInFront,
   layerOf,
@@ -17,6 +17,7 @@ import {
   deleteOverlay,
   loadOverlays,
   removePanel,
+  removePluginPanels,
   renameOverlay,
   saveOverlays,
   overlayForApp,
@@ -43,7 +44,13 @@ import { Browser } from './Browser';
 import { Panel, type LayerAction } from './Panel';
 import { PluginFrame } from './PluginFrame';
 import { WebSlot } from './WebSlot';
-import { broadcastTheme, listPlugins, startBroker, type PluginManifest } from './plugins';
+import {
+  broadcastTheme,
+  listPlugins,
+  startBroker,
+  type InstalledPlugin,
+  type PluginManifest,
+} from './plugins';
 import { SettingsWindow } from './settings/SettingsWindow';
 import { useSettings } from './settings/settings';
 import { applyShortcuts } from './settings/shortcuts';
@@ -109,16 +116,17 @@ function defaultLayout(id: PanelId, plugins: PluginManifest[]): PanelLayout {
 
 /** Installed plugins (null until listed), and the broker relaying their
  * calls (ADR 0003). */
-function usePlugins(): PluginManifest[] | null {
-  const [plugins, setPlugins] = useState<PluginManifest[] | null>(null);
+function usePlugins(): [InstalledPlugin[] | null, () => void] {
+  const [plugins, setPlugins] = useState<InstalledPlugin[] | null>(null);
   useEffect(() => startBroker(), []);
-  useEffect(() => {
+  const refresh = useCallback(() => {
     listPlugins().then(setPlugins, (error: unknown) => {
       console.error('Cannot list plugins:', error);
-      setPlugins([]);
+      setPlugins((known) => known ?? []);
     });
   }, []);
-  return plugins;
+  useEffect(refresh, [refresh]);
+  return [plugins, refresh];
 }
 
 /** Presses inside a web panel's native view, which the page never sees. */
@@ -208,15 +216,18 @@ function useOverlaySwitches(onSwitch: (request: OverlaySwitch) => void) {
 export function App() {
   const { mode, visibility } = useOverlayStatus();
   const viewport = useViewport();
-  const listed = usePlugins();
-  const plugins = listed ?? [];
+  const [settings, updateSettings] = useSettings();
+  const [installed, refreshPlugins] = usePlugins();
+  const listed = installed
+    ? installed.filter((plugin) => !settings.disabledPlugins.includes(plugin.id))
+    : null;
+  const plugins: PluginManifest[] = listed ?? [];
   const defaults = (id: PanelId) => defaultLayout(id, plugins);
   const [overlays, commit] = useOverlays(listed, defaults);
   const layout = overlays ? activeOverlay(overlays).panels : null;
   // The panel shown full screen. Not saved: it only lasts while the overlay is
   // summoned, so a pinned panel never takes the whole screen over a game.
   const [maximized, setMaximized] = useState<PanelId | null>(null);
-  const [settings, updateSettings] = useSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [guides, setGuides] = useState<Guide[]>([]);
   const lastRegions = useRef<Rect[] | null>(null);
@@ -409,6 +420,11 @@ export function App() {
         <SettingsWindow
           settings={settings}
           update={updateSettings}
+          plugins={installed ?? []}
+          onPluginsChanged={refreshPlugins}
+          onPluginRemoved={(id) => {
+            if (overlays) commit(removePluginPanels(overlays, id));
+          }}
           onClose={() => setSettingsOpen(false)}
         />
       )}
@@ -454,7 +470,7 @@ export function App() {
               ) : plugin.web ? (
                 <WebSlot panelId={id} name={title} visible={onScreen(id)} />
               ) : (
-                <PluginFrame plugin={plugin} visible={onScreen(id)} />
+                <PluginFrame key={plugin.version} plugin={plugin} visible={onScreen(id)} />
               )}
             </Panel>
           );

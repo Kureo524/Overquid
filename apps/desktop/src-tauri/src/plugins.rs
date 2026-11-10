@@ -135,6 +135,9 @@ pub struct Manifest {
     pub id: String,
     pub name: String,
     pub version: String,
+    /// One line about the plugin, shown in the settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     /// Entry HTML file of an iframe plugin. Exactly one of `entry` and `web`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry: Option<String>,

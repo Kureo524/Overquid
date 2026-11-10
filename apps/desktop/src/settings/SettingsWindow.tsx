@@ -2,22 +2,35 @@ import { useLayoutEffect, useState } from 'react';
 import { geometryChanged } from '../geometry';
 import { Appearance } from './Appearance';
 import { General } from './General';
+import { PluginsSection } from './Plugins';
 import { ShortcutsSection } from './Shortcuts';
+import type { InstalledPlugin } from '../plugins';
 import type { Settings, UpdateSettings } from './settings';
 
 /** In front of the panels and the overlay bar, behind menus. */
 export const SETTINGS_LAYER = 1_800_000;
 
-const TABS = ['General', 'Appearance', 'Shortcuts'] as const;
+const TABS = ['General', 'Appearance', 'Shortcuts', 'Plugins'] as const;
 type Tab = (typeof TABS)[number];
 
 interface SettingsWindowProps {
   settings: Settings;
   update: UpdateSettings;
+  plugins: InstalledPlugin[];
+  /** A plugin was installed or removed: list them again. */
+  onPluginsChanged: () => void;
+  onPluginRemoved: (id: string) => void;
   onClose: () => void;
 }
 
-export function SettingsWindow({ settings, update, onClose }: SettingsWindowProps) {
+export function SettingsWindow({
+  settings,
+  update,
+  plugins,
+  onPluginsChanged,
+  onPluginRemoved,
+  onClose,
+}: SettingsWindowProps) {
   const [tab, setTab] = useState<Tab>('General');
 
   // Web panels under the window are cut where it is.
@@ -88,6 +101,15 @@ export function SettingsWindow({ settings, update, onClose }: SettingsWindowProp
             snap={settings.snap}
             onShortcuts={(shortcuts) => update((current) => ({ ...current, shortcuts }))}
             onSnap={(snap) => update((current) => ({ ...current, snap }))}
+          />
+        )}
+        {tab === 'Plugins' && (
+          <PluginsSection
+            plugins={plugins}
+            disabled={settings.disabledPlugins}
+            onDisabled={(disabledPlugins) => update((current) => ({ ...current, disabledPlugins }))}
+            onChanged={onPluginsChanged}
+            onRemoved={onPluginRemoved}
           />
         )}
       </div>
