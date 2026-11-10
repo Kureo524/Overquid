@@ -29,6 +29,16 @@ pub enum Mode {
     Fallback,
 }
 
+/// A screen the overlay can be placed on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MonitorInfo {
+    /// Stable across restarts: model and position.
+    pub id: String,
+    pub name: String,
+    pub width: i32,
+    pub height: i32,
+}
+
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct Status {
     pub mode: Mode,
@@ -44,6 +54,8 @@ struct Inner {
     visibility: Visibility,
     pinned: Vec<Rect>,
     keymap: Keymap,
+    /// The screen the user chose (`MonitorInfo::id`); `None` lets the desktop choose.
+    monitor: Option<String>,
     /// While a shortcut is being recorded, keys go to the page.
     shortcuts_suspended: bool,
     /// The shortcut held down, run once its key is released.
@@ -65,6 +77,7 @@ impl Overlay {
                 visibility: Visibility::Hidden,
                 pinned: Vec::new(),
                 keymap: Keymap::default(),
+                monitor: None,
                 shortcuts_suspended: false,
                 pressed: None,
             }),
@@ -132,6 +145,16 @@ impl Overlay {
         }
     }
 
+    /// Moves the overlay to a screen. `None` gives the choice back to the desktop.
+    pub fn set_monitor<R: Runtime>(
+        &self,
+        window: &WebviewWindow<R>,
+        monitor: Option<String>,
+    ) -> tauri::Result<()> {
+        self.lock().monitor.clone_from(&monitor);
+        place_on_monitor(window, self.mode, monitor)
+    }
+
     pub fn set_keymap(&self, keymap: Keymap) {
         self.lock().keymap = keymap;
     }
@@ -193,7 +216,7 @@ impl Overlay {
                 set_input_region(window, None)?;
                 window.show()?;
                 if self.mode == Mode::Fallback {
-                    cover_monitor(window)?;
+                    self.cover(window)?;
                     window.set_focus()?;
                 } else {
                     set_keyboard(window, Keyboard::Exclusive)?;
@@ -202,6 +225,7 @@ impl Overlay {
             Visibility::Pinned => {
                 if self.mode == Mode::Fallback && previous == Visibility::Summoned {
                     remap_unfocused(window)?;
+                    self.cover(window)?;
                 } else if previous == Visibility::Hidden {
                     // Saved layout restored at startup.
                     if self.mode == Mode::Fallback {
@@ -209,7 +233,7 @@ impl Overlay {
                         // take the keyboard in fallback mode.
                         window.set_focusable(false)?;
                         window.show()?;
-                        cover_monitor(window)?;
+                        self.cover(window)?;
                     } else {
                         window.show()?;
                     }
@@ -226,6 +250,12 @@ impl Overlay {
             window.emit(STATE_EVENT, visibility)?;
         }
         Ok(())
+    }
+
+    /// Fallback mode: sizes the window to its screen.
+    fn cover<R: Runtime>(&self, window: &WebviewWindow<R>) -> tauri::Result<()> {
+        let monitor = self.lock().monitor.clone();
+        place_on_monitor(window, Mode::Fallback, monitor)
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
@@ -408,8 +438,135 @@ fn on_gtk_window<R: Runtime>(
 fn remap_unfocused<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<()> {
     window.set_focusable(false)?;
     window.hide()?;
-    window.show()?;
-    cover_monitor(window)
+    window.show()
+}
+
+/// Identifies a monitor across restarts (GTK 3 does not expose its connector).
+#[cfg(target_os = "linux")]
+fn monitor_id(monitor: &gtk::gdk::Monitor) -> String {
+    use gtk::prelude::*;
+    let box_ = monitor.geometry();
+    format!(
+        "{}:{}x{}+{}+{}",
+        monitor.model().unwrap_or_default(),
+        box_.width(),
+        box_.height(),
+        box_.x(),
+        box_.y()
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn gdk_monitors() -> Vec<gtk::gdk::Monitor> {
+    let Some(display) = gtk::gdk::Display::default() else {
+        return Vec::new();
+    };
+    (0..display.n_monitors())
+        .filter_map(|index| display.monitor(index))
+        .collect()
+}
+
+/// Screens the overlay can be placed on. Must run on the main thread.
+#[cfg(target_os = "linux")]
+pub fn monitors() -> Vec<MonitorInfo> {
+    use gtk::prelude::*;
+    gdk_monitors()
+        .iter()
+        .map(|monitor| {
+            let box_ = monitor.geometry();
+            MonitorInfo {
+                id: monitor_id(monitor),
+                name: monitor
+                    .model()
+                    .map(|model| model.to_string())
+                    .filter(|model| !model.is_empty())
+                    .unwrap_or_else(|| "Screen".to_owned()),
+                width: box_.width(),
+                height: box_.height(),
+            }
+        })
+        .collect()
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn monitors() -> Vec<MonitorInfo> {
+    Vec::new()
+}
+
+/// Puts the window on the chosen screen. A layer surface is remapped by GTK; a
+/// fallback window is sized to the screen (the current one if none is chosen).
+fn place_on_monitor<R: Runtime>(
+    window: &WebviewWindow<R>,
+    mode: Mode,
+    monitor: Option<String>,
+) -> tauri::Result<()> {
+    #[cfg(target_os = "linux")]
+    let target = window.clone();
+    #[cfg(target_os = "linux")]
+    return window.run_on_main_thread(move || {
+        let chosen = monitor.as_ref().and_then(|id| {
+            gdk_monitors()
+                .into_iter()
+                .find(|candidate| monitor_id(candidate) == *id)
+        });
+        if mode == Mode::LayerShell {
+            match target.gtk_window() {
+                Ok(gtk_window) => set_layer_monitor(&gtk_window, chosen.as_ref()),
+                Err(error) => eprintln!("overquid: no GTK window: {error}"),
+            }
+            return;
+        }
+        let placed = match &chosen {
+            Some(monitor) => cover_gdk_monitor(&target, monitor),
+            None => cover_monitor(&target),
+        };
+        if let Err(error) = placed {
+            eprintln!("overquid: cannot size the overlay: {error}");
+        }
+    });
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = monitor;
+        if mode == Mode::Fallback {
+            cover_monitor(window)?;
+        }
+        Ok(())
+    }
+}
+
+/// The binding only accepts a monitor; the C function also takes none, which
+/// gives the choice back to the compositor.
+#[cfg(target_os = "linux")]
+fn set_layer_monitor(window: &gtk::ApplicationWindow, monitor: Option<&gtk::gdk::Monitor>) {
+    use gtk::glib::translate::ToGlibPtr;
+    use gtk::prelude::*;
+    let window: &gtk::Window = window.upcast_ref();
+    // SAFETY: both pointers are valid for the call (or null for the monitor,
+    // which the function documents as "let the compositor choose").
+    unsafe {
+        gtk_layer_shell_sys::gtk_layer_set_monitor(
+            window.to_glib_none().0,
+            monitor.to_glib_none().0,
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn cover_gdk_monitor<R: Runtime>(
+    window: &WebviewWindow<R>,
+    monitor: &gtk::gdk::Monitor,
+) -> tauri::Result<()> {
+    use gtk::prelude::*;
+    let box_ = monitor.geometry();
+    let scale = monitor.scale_factor();
+    window.set_position(tauri::PhysicalPosition::new(
+        box_.x() * scale,
+        box_.y() * scale,
+    ))?;
+    window.set_size(tauri::PhysicalSize::new(
+        (box_.width() * scale) as u32,
+        (box_.height() * scale) as u32,
+    ))
 }
 
 /// Sizes the fallback window to its monitor. Layer-shell surfaces are sized by

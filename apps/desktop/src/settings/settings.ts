@@ -9,6 +9,8 @@ export interface Settings {
   shortcuts: Shortcuts;
   /** Installed plugins the user switched off. */
   disabledPlugins: string[];
+  /** The screen the overlay goes on (`MonitorInfo::id`); `null` lets the desktop choose. */
+  monitor: string | null;
 }
 
 /** Keyboard shortcuts (`Ctrl+Shift+X`); empty means none. */
@@ -40,6 +42,7 @@ export const DEFAULT_SETTINGS: Settings = {
   snap: { mode: 'hold', key: 'Control' },
   shortcuts: { toggle: null, close: 'Escape', next: '', prev: '', settings: '' },
   disabledPlugins: [],
+  monitor: null,
 };
 
 export const SETTINGS_VERSION = 1;
@@ -96,6 +99,7 @@ export function parseSettings(value: unknown): Settings {
     disabledPlugins: Array.isArray(saved.disabledPlugins)
       ? saved.disabledPlugins.filter((id): id is string => typeof id === 'string')
       : [],
+    monitor: typeof saved.monitor === 'string' && saved.monitor ? saved.monitor : null,
   };
 }
 
@@ -103,6 +107,20 @@ export const serializeSettings = (settings: Settings) => ({
   version: SETTINGS_VERSION,
   ...settings,
 });
+
+/** A screen the overlay can be placed on. */
+export interface Monitor {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+}
+
+export const listMonitors = () => invoke<Monitor[]>('list_monitors');
+export const setOverlayMonitor = (monitor: string | null) =>
+  invoke('set_overlay_monitor', { monitor }).catch((error: unknown) =>
+    console.error('Cannot place the overlay:', error),
+  );
 
 /** Delay before saving: a slider being dragged only writes once. */
 const SAVE_DELAY = 300;

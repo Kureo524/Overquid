@@ -520,6 +520,29 @@ fn set_shortcuts(
     Ok(())
 }
 
+/// Screens the overlay can be placed on.
+#[tauri::command(async)]
+fn list_monitors<R: Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<Vec<overlay::MonitorInfo>, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(overlay::monitors());
+    })
+    .map_err(|error| error.to_string())?;
+    rx.recv().map_err(|error| error.to_string())
+}
+
+/// Places the overlay on a screen, or lets the desktop choose (`None`).
+#[tauri::command]
+fn set_overlay_monitor<R: Runtime>(
+    window: WebviewWindow<R>,
+    overlay: State<'_, Overlay>,
+    monitor: Option<String>,
+) -> tauri::Result<()> {
+    overlay.set_monitor(&window, monitor)
+}
+
 /// Lets keys reach the page while a new shortcut is being recorded.
 #[tauri::command]
 fn suspend_shortcuts(overlay: State<'_, Overlay>, suspended: bool) {
@@ -636,6 +659,8 @@ pub fn run() {
             shortcut_desktop,
             set_shortcuts,
             suspend_shortcuts,
+            list_monitors,
+            set_overlay_monitor,
             plugin_call,
             list_plugins,
             plugin_catalog,

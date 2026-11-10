@@ -87,6 +87,8 @@ export function SettingsWindow({
           <General
             snap={settings.snap}
             onSnap={(snap) => update((current) => ({ ...current, snap }))}
+            monitor={settings.monitor}
+            onMonitor={(monitor) => update((current) => ({ ...current, monitor }))}
           />
         )}
         {tab === 'Appearance' && (

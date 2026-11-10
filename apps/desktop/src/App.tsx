@@ -23,6 +23,7 @@ import {
   overlayForApp,
   switchByName,
   toggleApp,
+  toggleKeep,
   updatePanel,
   STARTER_PANELS,
   type Fill,
@@ -52,7 +53,7 @@ import {
   type PluginManifest,
 } from './plugins';
 import { SettingsWindow } from './settings/SettingsWindow';
-import { useSettings } from './settings/settings';
+import { setOverlayMonitor, useSettings } from './settings/settings';
 import { applyShortcuts } from './settings/shortcuts';
 import type { Guide } from './snap';
 import { applyTheme, themeTokens } from './theme';
@@ -151,7 +152,8 @@ function useViewport(): Size {
 }
 
 /** What `overquid next|prev|switch NAME` sends (`cli::OverlaySwitch`). */
-type OverlaySwitch = { kind: 'next' } | { kind: 'prev' } | { kind: 'switch'; name: string };
+type OverlaySwitch =
+  { kind: 'next' } | { kind: 'prev' } | { kind: 'keep' } | { kind: 'switch'; name: string };
 
 /**
  * The saved overlays (null until loaded) and a setter that also saves them.
@@ -246,6 +248,7 @@ export function App() {
     if (!overlays) return;
     if (request.kind === 'next') changeOverlays(cycle(overlays, 1));
     else if (request.kind === 'prev') changeOverlays(cycle(overlays, -1));
+    else if (request.kind === 'keep') commit(toggleKeep(overlays));
     else changeOverlays(switchByName(overlays, request.name));
   });
 
@@ -270,10 +273,12 @@ export function App() {
   const summoned = visibility === 'summoned';
   // Pinned panels stay rendered while hidden (the window is unmapped then):
   // their rectangles are needed to bring them back at startup.
-  const visible = (id: PanelId) => inOverlay(id) && (summoned || panel(id).pinned);
+  const kept = overlays !== null && activeOverlay(overlays).keep === true;
+  const stays = (id: PanelId) => panel(id).pinned || kept;
+  const visible = (id: PanelId) => inOverlay(id) && (summoned || stays(id));
   // What the user actually sees (the window is unmapped while hidden).
   const onScreen = (id: PanelId) =>
-    inOverlay(id) && (summoned || (visibility === 'pinned' && panel(id).pinned));
+    inOverlay(id) && (summoned || (visibility === 'pinned' && stays(id)));
 
   // Tell the core where the pinned panels are: in pinned mode they are the
   // only areas that take clicks. The first report after loading the layout
@@ -307,6 +312,10 @@ export function App() {
   }, [settings.shortcuts]);
 
   useEffect(() => {
+    void setOverlayMonitor(settings.monitor);
+  }, [settings.monitor]);
+
+  useEffect(() => {
     const stop = listen('open-settings', () => setSettingsOpen((open) => !open));
     return () => void stop.then((unlisten) => unlisten());
   }, []);
@@ -335,6 +344,7 @@ export function App() {
   const panelProps = (id: PanelId) => ({
     placement: panel(id).placement,
     pinned: panel(id).pinned,
+    kept,
     viewport,
     snap: settings.snap,
     onGuides: setGuides,
@@ -393,6 +403,8 @@ export function App() {
           active={overlays.active}
           addable={addable}
           onSettings={() => setSettingsOpen((open) => !open)}
+          kept={kept}
+          onToggleKeep={() => commit(toggleKeep(overlays))}
           onSwitch={(id) => changeOverlays({ ...overlays, active: id })}
           onCreate={() => changeOverlays(createOverlay(overlays))}
           onRename={(id, name) => commit(renameOverlay(overlays, id, name))}

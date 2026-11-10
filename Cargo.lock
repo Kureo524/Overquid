@@ -2473,6 +2473,7 @@ dependencies = [
  "gio",
  "gtk",
  "gtk-layer-shell",
+ "gtk-layer-shell-sys",
  "percent-encoding",
  "serde",
  "serde_json",
