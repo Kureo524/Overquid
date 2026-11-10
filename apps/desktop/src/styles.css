@@ -173,11 +173,67 @@ kbd {
 }
 
 .web-slot {
+  position: relative;
   display: grid;
   place-items: center;
   width: 100%;
   border-radius: 10px;
   background: var(--canvas);
+}
+
+/*
+ * The panel's margin around a web page takes the colours of the page's edge,
+ * and dissolves outwards into the glass. Sizes: `.panel__body`'s padding.
+ */
+.web-edge {
+  position: absolute;
+  pointer-events: none;
+  --dissolve: #000, rgba(0, 0, 0, 0.72) 35%, rgba(0, 0, 0, 0.28) 70%, transparent;
+}
+
+.web-edge--top,
+.web-edge--bottom {
+  right: -16px;
+  left: -16px;
+  mask-composite: intersect;
+}
+
+.web-edge--top {
+  top: -14px;
+  height: 14px;
+  mask-image:
+    linear-gradient(to top, var(--dissolve)),
+    linear-gradient(to right, transparent, #000 16px, #000 calc(100% - 16px), transparent);
+}
+
+.web-edge--bottom {
+  bottom: -16px;
+  height: 16px;
+  mask-image:
+    linear-gradient(to bottom, var(--dissolve)),
+    linear-gradient(to right, transparent, #000 16px, #000 calc(100% - 16px), transparent);
+}
+
+.web-edge--left,
+.web-edge--right {
+  top: 0;
+  bottom: 0;
+  width: 16px;
+}
+
+.web-edge--left {
+  left: -16px;
+  mask-image: linear-gradient(to left, var(--dissolve));
+}
+
+.web-edge--right {
+  right: -16px;
+  mask-image: linear-gradient(to right, var(--dissolve));
+}
+
+/* A browser's address bar sits right above the page. */
+.browser .web-edge--top {
+  display: none;
 }
 
 .big-number {
