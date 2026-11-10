@@ -184,7 +184,9 @@ pub fn http_fetch(url: &str, max: u64) -> Result<Vec<u8>, String> {
         .map_err(|error| error.to_string())?
         .body_mut()
         .with_config()
-        .limit(max)
+        // ureq refuses a body that reaches the limit: one byte more for a
+        // body of exactly `max` bytes.
+        .limit(max.saturating_add(1))
         .read_to_vec()
         .map_err(|error| error.to_string())
 }
@@ -193,6 +195,33 @@ pub fn http_fetch(url: &str, max: u64) -> Result<Vec<u8>, String> {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use std::io::{Read, Write};
+
+    /// Serves one response with a body of `size` bytes on a local port.
+    fn serve_once(size: usize) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 1024];
+            let _ = stream.read(&mut request);
+            let head =
+                format!("HTTP/1.1 200 OK\r\nContent-Length: {size}\r\nConnection: close\r\n\r\n");
+            stream.write_all(head.as_bytes()).unwrap();
+            stream.write_all(&vec![b'x'; size]).unwrap();
+        });
+        format!("http://127.0.0.1:{port}/file")
+    }
+
+    #[test]
+    fn downloads_a_body_of_exactly_the_announced_size() {
+        assert_eq!(http_fetch(&serve_once(100), 100).unwrap().len(), 100);
+    }
+
+    #[test]
+    fn refuses_a_larger_body() {
+        assert!(http_fetch(&serve_once(101), 100).is_err());
+    }
 
     const MANIFEST: &str =
         r#"{"id":"dev.a","name":"A","version":"2.0.0","entry":"dist/index.html"}"#;
