@@ -129,6 +129,8 @@ export function themeTokens(theme: Theme): Record<string, string> {
     // The two thicknesses of glass sit a little above the ink.
     '--glass': rgba(lift(inkRgb, [9, 10, 13]), Math.max(0.5, glass - 0.12)),
     '--surface': rgba(lift(inkRgb, [5, 6, 8]), glass),
+    // A full-screen panel hides what is behind it.
+    '--solid': `rgb(${lift(inkRgb, [5, 6, 8]).join(', ')})`,
     '--input': rgba(inkRgb, 0.7),
     '--canvas': rgba(inkRgb, 0.8),
   };

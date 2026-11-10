@@ -4,6 +4,7 @@
   --veil: rgba(11, 12, 17, 0.38);
   --glass: rgba(20, 22, 30, 0.72);
   --surface: rgba(16, 18, 25, 0.84);
+  --solid: rgb(16, 18, 25);
   --canvas: rgba(11, 12, 17, 0.8);
   --surface-raised: rgba(230, 234, 242, 0.06);
   --border: rgba(230, 234, 242, 0.08);
@@ -67,6 +68,8 @@ body {
 .panel--maximized {
   border-color: transparent;
   border-radius: 0;
+  background: var(--solid);
+  backdrop-filter: none;
 }
 
 .panel--maximized .panel__bar {
