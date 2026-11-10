@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode } 
 import { geometryChanged } from './geometry';
 import { Menu } from './Menu';
 import {
+  MAXIMIZED_LAYER,
   MIN_SIZE,
   RESIZE_EDGES,
   resizeBox,
@@ -34,6 +35,10 @@ interface PanelProps {
   onPlace: (placement: Placement) => void;
   /** Called once a resize ends, with the new content size and placement. */
   onResize?: ((size: Size, placement: Placement) => void) | undefined;
+  /** Covers the whole screen, in front of the other panels, until restored. */
+  maximized: boolean;
+  /** A double click on the panel's frame maximizes it or restores it. */
+  onToggleMaximize: () => void;
   onTogglePin: () => void;
   onPointerLeave?: (() => void) | undefined;
   /** Kept in the page but not shown (plugin panels stay loaded while hidden). */
@@ -87,6 +92,8 @@ export function Panel({
   pinned,
   onPlace,
   onResize,
+  maximized,
+  onToggleMaximize,
   onTogglePin,
   onPointerLeave,
   hidden = false,
@@ -120,15 +127,22 @@ export function Panel({
     return () => observer.disconnect();
   }, []);
 
-  const resizable = contentHeight !== undefined && onResize !== undefined;
-  const content: Size | null =
-    live?.content ?? (contentHeight === undefined ? null : { width, height: contentHeight });
+  const resizable = contentHeight !== undefined && onResize !== undefined && !maximized;
+  const fullScreen: Size = {
+    width: viewport.width - BORDER_WIDTH,
+    height: viewport.height - CHROME_HEIGHT,
+  };
+  const content: Size | null = maximized
+    ? fullScreen
+    : (live?.content ?? (contentHeight === undefined ? null : { width, height: contentHeight }));
   const panelWidth = content?.width ?? width;
   const size: Size = {
     width: panelWidth + BORDER_WIDTH,
     height: content ? content.height + CHROME_HEIGHT : height,
   };
-  const position = live?.position ?? toPosition(placement, size, viewport);
+  const position = maximized
+    ? { x: 0, y: 0 }
+    : (live?.position ?? toPosition(placement, size, viewport));
 
   const startGesture = (event: PointerEvent<HTMLElement>, next: Gesture) => {
     gesture.current = next;
@@ -136,7 +150,7 @@ export function Panel({
   };
 
   const onBarDown = (event: PointerEvent<HTMLElement>) => {
-    if (event.button !== 0 || (event.target as Element).closest('button')) return;
+    if (maximized || event.button !== 0 || (event.target as Element).closest('button')) return;
     startGesture(event, {
       kind: 'drag',
       dx: event.clientX - position.x,
@@ -199,20 +213,28 @@ export function Panel({
   return (
     <section
       ref={ref}
-      className="glass panel"
+      className={maximized ? 'glass panel panel--maximized' : 'glass panel'}
       style={{
         width: panelWidth,
         left: position.x,
         top: position.y,
-        zIndex: layer,
+        zIndex: maximized ? MAXIMIZED_LAYER : layer,
         visibility: hidden ? 'hidden' : undefined,
       }}
       aria-hidden={hidden || undefined}
       data-pinned={pinned}
-      data-layer={layer}
+      data-layer={maximized ? MAXIMIZED_LAYER : layer}
       data-hidden={hidden}
       onPointerDownCapture={onRaise}
       aria-label={title}
+      onDoubleClick={(event) => {
+        const target = event.target as Element;
+        const onFrame =
+          target.classList.contains('panel__body') ||
+          target.closest('.panel__edge') !== null ||
+          (target.closest('.panel__bar') !== null && target.closest('button') === null);
+        if (onFrame) onToggleMaximize();
+      }}
       onPointerMove={(event) => {
         if (!resizable || gesture.current) return;
         const corner = cornerNear(

@@ -194,6 +194,9 @@ export const serializeLayout = (layout: Layout) => ({ version: LAYOUT_VERSION, p
 /** Panels kept on top stay above this offset, in their own order. */
 const ON_TOP = 1_000_000;
 
+/** A full-screen panel: in front of every other panel, behind the menus. */
+export const MAXIMIZED_LAYER = 1_200_000;
+
 /** Stacking value of a panel: what the DOM `z-index` and the clipping of web panels use. */
 export const layerOf = (panel: PanelLayout): number => (panel.z ?? 0) + (panel.onTop ? ON_TOP : 0);
 
