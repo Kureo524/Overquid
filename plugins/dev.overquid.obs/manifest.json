@@ -1,0 +1,10 @@
+{
+  "id": "dev.overquid.obs",
+  "name": "OBS",
+  "version": "1.0.0",
+  "description": "Switch scenes, start streaming or recording, and mute sources in OBS.",
+  "entry": "dist/index.html",
+  "panel": { "defaultSize": [320, 420], "position": "top-left" },
+  "permissions": ["storage"],
+  "network": ["127.0.0.1:*"]
+}

@@ -450,6 +450,9 @@ pub fn serve_from(roots: &[PathBuf], request_path: &str) -> Response<Cow<'static
     }
 }
 
+/// Hosts that are this machine (ADR 0011): reachable in clear text too.
+const LOOPBACK: [&str; 2] = ["127.0.0.1", "localhost"];
+
 /// A network entry is a host name, optionally with a port or `*` for any port
 /// (`api.example.com`, `example.com:8443`, `archipelago.gg:*`). It stays a CSP
 /// source expression once checked: `None` for anything else.
@@ -467,18 +470,26 @@ fn network_source(entry: &str) -> Option<&str> {
                 && port.parse::<u16>().is_ok()
         }
     };
-    (is_valid_domain(host) && port_ok).then_some(entry)
+    ((is_valid_domain(host) || LOOPBACK.contains(&host)) && port_ok).then_some(entry)
 }
 
 /// CSP of a plugin document: its own files, and the network domains it
 /// declared, over `https` and secure WebSockets. Plain `http` and `ws` stay
-/// blocked.
+/// blocked, except towards this machine (ADR 0011).
 pub fn content_security_policy(id: &str, network: &[String]) -> String {
     let own = format!("{SCHEME}://localhost/{id}/");
     let connect: Vec<String> = network
         .iter()
         .filter_map(|entry| network_source(entry))
-        .flat_map(|source| [format!("https://{source}"), format!("wss://{source}")])
+        .flat_map(|source| {
+            let host = source.split(':').next().unwrap_or(source);
+            let mut sources = vec![format!("https://{source}"), format!("wss://{source}")];
+            if LOOPBACK.contains(&host) {
+                sources.push(format!("http://{source}"));
+                sources.push(format!("ws://{source}"));
+            }
+            sources
+        })
         .collect();
     let connect = if connect.is_empty() {
         "'none'".to_owned()
@@ -640,6 +651,23 @@ mod tests {
         for rejected in ["zero", "big", "sign", "no.port", "two", "path"] {
             assert!(!csp.contains(rejected), "{rejected}");
         }
+    }
+
+    #[test]
+    fn only_this_machine_is_reachable_in_clear_text() {
+        let csp = content_security_policy(
+            "a.b",
+            &[
+                "127.0.0.1:*".into(),
+                "localhost:4455".into(),
+                "example.com".into(),
+            ],
+        );
+        assert!(csp.contains("ws://127.0.0.1:*"), "{csp}");
+        assert!(csp.contains("ws://localhost:4455"), "{csp}");
+        assert!(!csp.contains("ws://example.com") || csp.contains("wss://example.com"));
+        assert!(!csp.contains(" ws://example.com"), "{csp}");
+        assert!(!csp.contains("http://example.com"), "{csp}");
     }
 
     #[test]
