@@ -46,6 +46,7 @@ import { WebSlot } from './WebSlot';
 import { broadcastTheme, listPlugins, startBroker, type PluginManifest } from './plugins';
 import { SettingsWindow } from './settings/SettingsWindow';
 import { useSettings } from './settings/settings';
+import type { Guide } from './snap';
 import { applyTheme, themeTokens } from './theme';
 
 const modeLabel: Record<OverlayMode, string> = {
@@ -216,6 +217,7 @@ export function App() {
   const [maximized, setMaximized] = useState<PanelId | null>(null);
   const [settings, updateSettings] = useSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [guides, setGuides] = useState<Guide[]>([]);
   const lastRegions = useRef<Rect[] | null>(null);
   const restorePending = useRef(true);
 
@@ -313,6 +315,8 @@ export function App() {
     placement: panel(id).placement,
     pinned: panel(id).pinned,
     viewport,
+    snap: settings.snap,
+    onGuides: setGuides,
     layer: layerOf(panel(id)),
     maximized: summoned && fullScreen === id,
     onToggleMaximize: () => setMaximized(fullScreen === id ? null : id),
@@ -384,6 +388,13 @@ export function App() {
           }}
         />
       )}
+      {guides.map((guide) => (
+        <div
+          key={`${guide.axis}${guide.at}`}
+          className={`snap-guide snap-guide--${guide.axis}`}
+          style={guide.axis === 'x' ? { left: guide.at } : { top: guide.at }}
+        />
+      ))}
       {summoned && settingsOpen && (
         <SettingsWindow
           settings={settings}

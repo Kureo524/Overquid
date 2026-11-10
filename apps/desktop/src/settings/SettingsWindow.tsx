@@ -69,7 +69,12 @@ export function SettingsWindow({ settings, update, onClose }: SettingsWindowProp
             <path d="m4.5 4.5 7 7m0-7-7 7" />
           </svg>
         </button>
-        {tab === 'General' && <General />}
+        {tab === 'General' && (
+          <General
+            snap={settings.snap}
+            onSnap={(snap) => update((current) => ({ ...current, snap }))}
+          />
+        )}
         {tab === 'Appearance' && (
           <Appearance
             theme={settings.theme}

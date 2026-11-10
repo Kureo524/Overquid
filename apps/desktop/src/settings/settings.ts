@@ -5,9 +5,27 @@ import { DEFAULT_THEME, isHex, type Theme } from '../theme';
 /** What `settings.json` holds. Anything missing or malformed takes its default. */
 export interface Settings {
   theme: Theme;
+  snap: SnapSettings;
 }
 
-export const DEFAULT_SETTINGS: Settings = { theme: DEFAULT_THEME };
+/** When panels stick to each other and to the screen while moved or resized. */
+export type SnapMode = 'hold' | 'always' | 'off';
+
+/** A modifier, as `KeyboardEvent.getModifierState` names it. */
+export type Modifier = 'Control' | 'Shift' | 'Alt' | 'Meta';
+
+export const MODIFIERS: Modifier[] = ['Control', 'Shift', 'Alt', 'Meta'];
+
+export interface SnapSettings {
+  mode: SnapMode;
+  /** With `hold`, the key that turns snapping on. */
+  key: Modifier;
+}
+
+export const DEFAULT_SETTINGS: Settings = {
+  theme: DEFAULT_THEME,
+  snap: { mode: 'hold', key: 'Control' },
+};
 
 export const SETTINGS_VERSION = 1;
 
@@ -27,9 +45,21 @@ function parseTheme(value: unknown): Theme {
   };
 }
 
+const oneOf = <T extends string>(value: unknown, allowed: readonly T[], fallback: T): T =>
+  allowed.includes(value as T) ? (value as T) : fallback;
+
+function parseSnap(value: unknown): SnapSettings {
+  const snap = isRecord(value) ? value : {};
+  const fallback = DEFAULT_SETTINGS.snap;
+  return {
+    mode: oneOf(snap.mode, ['hold', 'always', 'off'], fallback.mode),
+    key: oneOf(snap.key, MODIFIERS, fallback.key),
+  };
+}
+
 export function parseSettings(value: unknown): Settings {
   const saved = isRecord(value) ? value : {};
-  return { theme: parseTheme(saved.theme) };
+  return { theme: parseTheme(saved.theme), snap: parseSnap(saved.snap) };
 }
 
 export const serializeSettings = (settings: Settings) => ({
