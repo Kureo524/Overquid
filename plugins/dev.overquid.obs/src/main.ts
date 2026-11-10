@@ -24,6 +24,9 @@ const launchView = element('launch');
 const startButton = element<HTMLButtonElement>('start');
 const workspaceField = element<HTMLInputElement>('workspace');
 const preview = element<HTMLImageElement>('preview');
+const windowView = element('window');
+const windowStatus = element('window-status');
+const dockArea = element('dock');
 
 /** OBS's desktop entry, the same for a distribution package and the Flatpak. */
 const OBS_APP = 'com.obsproject.Studio';
@@ -47,7 +50,7 @@ const report = (error: unknown) => console.error('OBS:', error);
 
 /** Shows the current scene, one image after the other, while the panel is visible. */
 async function watch(connection: ObsConnection) {
-  while (obs === connection && overquid.visible) {
+  while (obs === connection && overquid.visible && !docked) {
     try {
       const width = Math.round(preview.clientWidth * devicePixelRatio) || 640;
       const answer = await connection.request('GetSourceScreenshot', {
@@ -170,7 +173,38 @@ function onEvent(type: string, data: Record<string, unknown>) {
   }
 }
 
+/** Whether OBS's own window is shown in the panel instead of the controls. */
+let docked = false;
+
+/** Puts OBS's window where the panel leaves room for it, or sends it back. */
+function placeWindow() {
+  const workspace = workspaceField.value.trim() || 'special:obs';
+  if (!docked) {
+    overquid.apps.dock(OBS_APP, null, { workspace }).catch(() => undefined);
+    return;
+  }
+  const { x, y, width, height } = dockArea.getBoundingClientRect();
+  overquid.apps.dock(OBS_APP, { x, y, width, height }, { workspace }).then(
+    () => {
+      windowStatus.textContent = '';
+    },
+    (error: unknown) => {
+      windowStatus.textContent = String(error).replace(/^.*Error: /, '');
+    },
+  );
+}
+
+function setDocked(next: boolean) {
+  docked = next;
+  windowView.hidden = !docked;
+  controls.hidden = docked || !obs;
+  connectView.hidden = docked || Boolean(obs);
+  placeWindow();
+  if (!docked) startWatching();
+}
+
 function show(connected: boolean) {
+  if (docked) return;
   connectView.hidden = connected;
   controls.hidden = !connected;
   connectButton.disabled = false;
@@ -204,7 +238,7 @@ function start() {
           return;
         }
         reason =
-          'OBS started, but its WebSocket server is off. In OBS, once: Tools › WebSocket Server Settings › Enable.';
+          'OBS started but does not answer. It may be asking something on its workspace, or its WebSocket server is off: in OBS, once, Tools › WebSocket Server Settings › Enable.';
       }
       waitingUntil = 0;
       status.textContent = reason;
@@ -233,6 +267,8 @@ async function launch() {
         String(port),
         '--websocket_password',
         password,
+        // Out of sight, nobody would see OBS ask about its last shutdown.
+        '--disable-shutdown-check',
         ...(workspace ? [] : ['--minimize-to-tray']),
       ],
       ...(workspace ? { workspace } : {}),
@@ -253,6 +289,11 @@ connectButton.addEventListener('click', () => {
   start();
 });
 startButton.addEventListener('click', () => void launch());
+element('window-open').addEventListener('click', () => setDocked(true));
+element('window-close').addEventListener('click', () => setDocked(false));
+new ResizeObserver(() => {
+  if (docked) placeWindow();
+}).observe(dockArea);
 passwordField.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') start();
 });

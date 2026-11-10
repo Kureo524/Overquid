@@ -34,7 +34,7 @@ await overquid.storage.set('count', count + 1);
 | `onShow`, `onHide`, `visible`                                          | none              |
 | `storage.get`, `set`, `remove`, `keys` (JSON values, 1 MiB per plugin) | `storage`         |
 | `files.home`, `list`, `open`, `rename`, `mkdir`, `trash`, `scan`       | `files`           |
-| `apps.installed`, `apps.launch`                                        | `apps` entries    |
+| `apps.installed`, `launch`, `dock`                                     | `apps` entries    |
 | `notify({ title, body })`: desktop notification, 5 per minute          | `notifications`   |
 | `fetch` and `WebSocket` (`https`, `wss`) to the hosts in `network`     | `network` entries |
 
@@ -49,6 +49,7 @@ Notes:
   (`archipelago.gg:*`). Plain `http` and `ws` are blocked.
 - An `apps` entry is the desktop entry of an application the plugin may start (`com.obsproject.Studio`):
   `apps.launch(app, { args, workspace })` adds arguments to that entry's command; `workspace` (Hyprland) starts it on a
-  workspace without going there.
+  workspace without going there. `apps.dock(app, rect)` shows that application's window inside the panel, at `rect` of
+  the plugin's page (Hyprland only); `apps.dock(app, null)` sends it away.
 
 See [`plugins/dev.overquid.sdk-demo`](../../plugins/dev.overquid.sdk-demo) for a complete example.

@@ -1,3 +1,4 @@
+import { releaseDock, requestDock } from './dock';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { PROTOCOL, isCall, type EventMessage, type ReplyMessage } from '@overquid/sdk';
 
@@ -84,7 +85,10 @@ const send = (frame: Window, message: ReplyMessage | EventMessage) =>
 
 export function registerFrame(frame: Window, pluginId: string): () => void {
   frames.set(frame, pluginId);
-  return () => frames.delete(frame);
+  return () => {
+    frames.delete(frame);
+    releaseDock(frame);
+  };
 }
 
 /** Tells a plugin whether its panel is on screen. */
@@ -109,7 +113,12 @@ export function startBroker(): () => void {
     const pluginId = source ? frames.get(source) : undefined;
     if (!source || !pluginId || !isCall(event.data)) return;
     const { id, method, args } = event.data;
-    invoke('plugin_call', { pluginId, method, args: args ?? null }).then(
+    // Needs the place of the plugin's panel, which only this page knows.
+    const answer =
+      method === 'apps.dock'
+        ? requestDock(source, pluginId, args)
+        : invoke('plugin_call', { pluginId, method, args: args ?? null });
+    answer.then(
       (result) => send(source, { overquid: PROTOCOL, id, result }),
       (error: unknown) => send(source, { overquid: PROTOCOL, id, error: String(error) }),
     );
