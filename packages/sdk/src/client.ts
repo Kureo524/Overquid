@@ -50,6 +50,19 @@ export interface SpaceNode {
   children: SpaceNode[];
 }
 
+export interface LaunchOptions {
+  /** Added after the application's own command. */
+  args?: string[];
+  /** Hyprland workspace to start on, without going there (`3`, `special:obs`). Ignored elsewhere. */
+  workspace?: string;
+}
+
+/** The applications listed in the manifest's `apps`, named by desktop entry. */
+export interface Apps {
+  installed(app: string): Promise<boolean>;
+  launch(app: string, options?: LaunchOptions): Promise<void>;
+}
+
 /**
  * The user's files. Needs the `files` permission. Plugins see names, sizes and
  * dates, never what is in a file, and can only delete by moving to the trash.
@@ -88,6 +101,8 @@ export interface OverquidClient {
   notify(notification: Notification): Promise<void>;
   /** The user's files. Needs the `files` permission. */
   files: Files;
+  /** The applications listed in the manifest's `apps`. */
+  apps: Apps;
   /** Raw call to a core method. Prefer the typed helpers. */
   call<T = unknown>(method: string, args?: unknown): Promise<T>;
 }
@@ -170,6 +185,12 @@ export function createClient(transport: Transport): OverquidClient {
         await call('files.trash', { path });
       },
       scan: (path) => call<SpaceNode>('files.scan', { path }),
+    },
+    apps: {
+      installed: (app) => call<boolean>('apps.installed', { app }),
+      launch: async (app, options = {}) => {
+        await call('apps.launch', { app, ...options });
+      },
     },
     storage: {
       get: async <T extends Json>(key: string) => {

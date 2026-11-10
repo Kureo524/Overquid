@@ -1,4 +1,5 @@
 mod active_app;
+mod apps;
 mod catalog;
 mod cli;
 mod content_filter;

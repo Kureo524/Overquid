@@ -21,6 +21,7 @@ export function accessOf(manifest: PluginManifest): string {
   const access = [
     ...manifest.permissions.map((permission) => PERMISSION_LABELS[permission] ?? permission),
     ...manifest.network.map((host) => `network: ${host}`),
+    ...(manifest.apps ?? []).map((app) => `starts: ${app}`),
     ...(manifest.web
       ? [manifest.web.browser ? 'opens any website' : `website: ${manifest.web.hosts.join(', ')}`]
       : []),
