@@ -62,6 +62,7 @@
     "license": "MIT",
     "linux": {
       "deb": {
+        "desktopTemplate": "overquid.desktop",
         "depends": [
           "libgtk-layer-shell0",
           "gstreamer1.0-plugins-good",
@@ -69,6 +70,7 @@
         ]
       },
       "rpm": {
+        "desktopTemplate": "overquid.desktop",
         "depends": [
           "gtk-layer-shell",
           "gstreamer1-plugins-good"
