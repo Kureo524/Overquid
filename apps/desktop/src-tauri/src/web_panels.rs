@@ -78,6 +78,25 @@ pub fn rounded_rectangles(
     parts
 }
 
+/// Width of the band where a page dissolves into its panel, in pixels.
+const FADE_WIDTH: f64 = 20.0;
+/// The panel's glass (`--surface` in the overlay's styles), which pages fade to.
+const FADE_COLOR: (f64, f64, f64) = (16.0 / 255.0, 18.0 / 255.0, 25.0 / 255.0);
+/// Gradient stops of the fade.
+const FADE_STOPS: u32 = 10;
+
+/// Opacity of the fade along its band, as `(offset, alpha)` stops from the
+/// panel's side (opaque) to the page's (clear). An S curve: a straight ramp
+/// would show as a line where it stops.
+pub fn fade_stops() -> Vec<(f64, f64)> {
+    (0..=FADE_STOPS)
+        .map(|stop| {
+            let t = f64::from(stop) / f64::from(FADE_STOPS);
+            (t, 1.0 - t * t * (3.0 - 2.0 * t))
+        })
+        .collect()
+}
+
 /// What a web panel reports to the overlay.
 pub struct Hooks {
     /// The page changed (address, title, history, loading).
@@ -174,7 +193,10 @@ mod linux {
     use crate::content_filter::{Compiled, host_of, is_excepted, page_resources};
     use crate::webkit_filter;
 
-    use super::{DataDirs, Hole, Hooks, Navigation, PAUSE_MEDIA, PageState, rounded_rectangles};
+    use super::{
+        DataDirs, FADE_COLOR, FADE_WIDTH, Hole, Hooks, Navigation, PAUSE_MEDIA, PageState,
+        fade_stops, rounded_rectangles,
+    };
     use crate::plugins::{WebSpec, host_allowed, https_host, resolve_input};
     use crate::state::Rect;
 
@@ -182,6 +204,8 @@ mod linux {
         overlay: gtk::Overlay,
         /// By panel id.
         views: HashMap<String, WebView>,
+        /// The layer that fades each view's edges, by panel id.
+        fades: HashMap<String, gtk::DrawingArea>,
         /// By plugin id: the instances of a plugin share its browsing data, and
         /// WebKit allows one data manager per directory.
         contexts: HashMap<String, WebContext>,
@@ -218,6 +242,7 @@ mod linux {
 
     struct Placed {
         view: gtk::Widget,
+        fade: gtk::Widget,
         rect: gtk::gdk::Rectangle,
         holes: Vec<gtk::cairo::RectangleInt>,
     }
@@ -237,7 +262,7 @@ mod linux {
                 rects
                     .borrow()
                     .iter()
-                    .find(|placed| placed.view == *widget)
+                    .find(|placed| placed.view == *widget || placed.fade == *widget)
                     .map(|placed| placed.rect)
             })
         });
@@ -249,6 +274,7 @@ mod linux {
             *state.borrow_mut() = Some(State {
                 overlay,
                 views: HashMap::new(),
+                fades: HashMap::new(),
                 contexts: HashMap::new(),
             });
         });
@@ -274,6 +300,9 @@ mod linux {
                     && view.is_visible()
                 {
                     view.hide();
+                    if let Some(fade) = state.fades.get(id) {
+                        fade.hide();
+                    }
                     if spec.pause_on_hide {
                         view.evaluate_javascript(
                             PAUSE_MEDIA,
@@ -298,9 +327,14 @@ mod linux {
                 filter_page(&view);
                 view.load_uri(&spec.url);
                 state.overlay.add_overlay(&view);
+                let fade = create_fade(&view);
+                state.overlay.add_overlay(&fade);
+                state.overlay.set_overlay_pass_through(&fade, true);
+                state.fades.insert(id.to_owned(), fade);
                 state.views.insert(id.to_owned(), view);
             }
             let view = &state.views[id];
+            let fade = &state.fades[id];
             let (x, y, width, height) = rect;
             let holes = holes
                 .iter()
@@ -320,6 +354,7 @@ mod linux {
                 .collect();
             let placed = Placed {
                 view: view.clone().upcast(),
+                fade: fade.clone().upcast(),
                 rect: gtk::gdk::Rectangle::new(x, y, width, height),
                 holes,
             };
@@ -332,9 +367,68 @@ mod linux {
             });
             view.show();
             view.queue_resize();
+            fade.show();
+            fade.queue_resize();
             cut(view.upcast_ref());
             Ok(())
         })
+    }
+
+    /// The layer over `view` that dissolves its edges into the panel, so the
+    /// page does not read as a window inside it. A widget of its own rather
+    /// than painting in the view's draw handler: GDK does not blend what is
+    /// drawn after WebKit's GL copy within the same widget. Nothing is changed
+    /// in the page itself, and clicks go through (`set_overlay_pass_through`).
+    fn create_fade(view: &WebView) -> gtk::DrawingArea {
+        let fade = gtk::DrawingArea::new();
+        // Like the view: shown only by `place`.
+        fade.set_no_show_all(true);
+        // A window of its own would catch every click, pass-through or not.
+        fade.set_has_window(false);
+        let page: gtk::Widget = view.clone().upcast();
+        fade.connect_draw(move |fade, cr| {
+            // Panels in front of the view hide its fade too.
+            if let Some(visible) = visible_region(&page) {
+                for index in 0..visible.num_rectangles() {
+                    let part = visible.rectangle(index);
+                    cr.rectangle(
+                        f64::from(part.x()),
+                        f64::from(part.y()),
+                        f64::from(part.width()),
+                        f64::from(part.height()),
+                    );
+                }
+                cr.clip();
+            }
+            paint_fade(
+                cr,
+                f64::from(fade.allocated_width()),
+                f64::from(fade.allocated_height()),
+            );
+            glib::Propagation::Proceed
+        });
+        fade
+    }
+
+    /// Four gradients, one per edge. Past its last stop a gradient is clear,
+    /// so each can be painted over the whole area.
+    fn paint_fade(cr: &gtk::cairo::Context, width: f64, height: f64) {
+        let band = FADE_WIDTH.min(width / 2.0).min(height / 2.0);
+        let (red, green, blue) = FADE_COLOR;
+        for (x0, y0, x1, y1) in [
+            (0.0, 0.0, 0.0, band),
+            (0.0, height, 0.0, height - band),
+            (0.0, 0.0, band, 0.0),
+            (width, 0.0, width - band, 0.0),
+        ] {
+            let gradient = gtk::cairo::LinearGradient::new(x0, y0, x1, y1);
+            for (offset, alpha) in fade_stops() {
+                gradient.add_color_stop_rgba(offset, red, green, blue, alpha);
+            }
+            if cr.set_source(&gradient).is_ok() {
+                let _ = cr.paint();
+            }
+        }
     }
 
     /// Cuts the panels in front out of the view for clicks: they reach the
@@ -392,8 +486,11 @@ mod linux {
         RECTS.with(|rects| rects.borrow_mut().retain(|placed| placed.view != widget));
         APPLIED.with(|applied| applied.borrow_mut().retain(|(known, _)| *known != view));
         STATE.with(|state| {
-            if let Some(state) = state.borrow().as_ref() {
+            if let Some(state) = state.borrow_mut().as_mut() {
                 state.overlay.remove(&view);
+                if let Some(fade) = state.fades.remove(id) {
+                    state.overlay.remove(&fade);
+                }
             }
         });
     }
@@ -845,12 +942,20 @@ mod linux {
 
 #[cfg(test)]
 mod tests {
-    use super::rounded_rectangles;
+    use super::{fade_stops, rounded_rectangles};
 
     fn covers(parts: &[(i32, i32, i32, i32)], px: i32, py: i32) -> bool {
         parts
             .iter()
             .any(|&(x, y, w, h)| px >= x && px < x + w && py >= y && py < y + h)
+    }
+
+    #[test]
+    fn fade_goes_from_opaque_to_clear_without_steps_back() {
+        let stops = fade_stops();
+        assert_eq!(stops.first(), Some(&(0.0, 1.0)));
+        assert_eq!(stops.last(), Some(&(1.0, 0.0)));
+        assert!(stops.windows(2).all(|pair| pair[1].1 < pair[0].1));
     }
 
     #[test]
