@@ -10,10 +10,16 @@ import {
 } from '../plugins';
 import { Switch } from './Controls';
 
+const PERMISSION_LABELS: Record<string, string> = {
+  files: 'browse and organise your files',
+  notifications: 'send notifications',
+  storage: 'save its data',
+};
+
 /** What a plugin may do, in words: shown before installing. */
 export function accessOf(manifest: PluginManifest): string {
   const access = [
-    ...manifest.permissions,
+    ...manifest.permissions.map((permission) => PERMISSION_LABELS[permission] ?? permission),
     ...manifest.network.map((host) => `network: ${host}`),
     ...(manifest.web
       ? [manifest.web.browser ? 'opens any website' : `website: ${manifest.web.hosts.join(', ')}`]
