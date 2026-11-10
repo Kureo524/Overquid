@@ -145,3 +145,16 @@ button.primary {
   background: transparent;
   color: #868a98;
 }
+.launch {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.preview {
+  flex-shrink: 0;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 10px;
+  background: rgba(11, 12, 17, 0.7);
+  object-fit: contain;
+}
