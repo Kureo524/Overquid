@@ -128,6 +128,7 @@ fn web_panel<R: Runtime>(
             cache: base.join("cache"),
         };
         let pressed = events.clone();
+        let edge_events = events.clone();
         let id = panel_id.clone();
         let hooks = web_panels::Hooks {
             on_change: Box::new(move |page| {
@@ -135,6 +136,9 @@ fn web_panel<R: Runtime>(
             }),
             on_press: Box::new(move || {
                 let _ = pressed.emit(WEB_PANEL_PRESSED_EVENT, &id);
+            }),
+            on_edges: Box::new(move |edges| {
+                let _ = edge_events.emit(WEB_PANEL_EDGES_EVENT, edges);
             }),
         };
         let _ = tx.send(web_panels::place(
@@ -176,6 +180,9 @@ fn web_panel_close<R: Runtime>(app: tauri::AppHandle<R>, panel_id: String) -> Re
 
 /// Sent with the panel id when the user clicks in a web panel's page.
 const WEB_PANEL_PRESSED_EVENT: &str = "web-panel-pressed";
+
+/// Sent with a `web_panels::PageEdges` when a page's edge colours are read.
+const WEB_PANEL_EDGES_EVENT: &str = "web-panel-edges";
 
 /// Runs a browser button or address bar entry (ADR 0004).
 #[tauri::command(async)]
