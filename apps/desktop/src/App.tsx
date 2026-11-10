@@ -208,6 +208,9 @@ export function App() {
   const defaults = (id: PanelId) => defaultLayout(id, plugins);
   const [overlays, commit] = useOverlays(listed, defaults);
   const layout = overlays ? activeOverlay(overlays).panels : null;
+  // The panel shown full screen. Not saved: it only lasts while the overlay is
+  // summoned, so a pinned panel never takes the whole screen over a game.
+  const [maximized, setMaximized] = useState<PanelId | null>(null);
   const lastRegions = useRef<Rect[] | null>(null);
   const restorePending = useRef(true);
 
@@ -242,6 +245,8 @@ export function App() {
   }, [activeApp]);
 
   const inOverlay = (id: PanelId) => layout !== null && id in layout;
+  // Switching overlays leaves the full-screen panel of the previous one behind.
+  const fullScreen = maximized !== null && inOverlay(maximized) ? maximized : null;
   const panel = (id: PanelId) => layout?.[id] ?? defaults(id);
   const summoned = visibility === 'summoned';
   // Pinned panels stay rendered while hidden (the window is unmapped then):
@@ -293,6 +298,8 @@ export function App() {
     pinned: panel(id).pinned,
     viewport,
     layer: layerOf(panel(id)),
+    maximized: summoned && fullScreen === id,
+    onToggleMaximize: () => setMaximized(fullScreen === id ? null : id),
     onTop: panel(id).onTop === true,
     onPlace: (placement: PanelLayout['placement']) => updateLayout(id, { placement }),
     onTogglePin: () => updateLayout(id, { pinned: !panel(id).pinned }),
@@ -309,6 +316,7 @@ export function App() {
       }
     },
     onClose: () => {
+      if (fullScreen === id) setMaximized(null);
       if (overlays) commit(removePanel(overlays, id));
     },
   });
@@ -338,7 +346,7 @@ export function App() {
 
   return (
     <main className={summoned ? 'stage stage--summoned' : 'stage'}>
-      {summoned && overlays && (
+      {summoned && overlays && fullScreen === null && (
         <OverlayBar
           overlays={overlays.overlays}
           active={overlays.active}

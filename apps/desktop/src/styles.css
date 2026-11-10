@@ -59,6 +59,15 @@ body {
   position: absolute;
 }
 
+.panel--maximized {
+  border-color: transparent;
+  border-radius: 0;
+}
+
+.panel--maximized .panel__bar {
+  cursor: default;
+}
+
 .panel__bar {
   display: flex;
   align-items: center;
