@@ -92,35 +92,59 @@ pub struct PageEdges {
 
 /// Colours read along each edge.
 const EDGE_SAMPLES: usize = 32;
-/// Thickness of the band read along each edge, in pixels: wide enough that a
-/// line of text across it does not decide the colour.
+/// Thickness of the band read along each edge, in pixels.
 const EDGE_BAND: usize = 3;
+/// Neighbours on each side a colour is compared with along its edge. A page
+/// puts small things against its edges (Discord's white server pills): what
+/// is narrower than about a third of the side is not the page's colour there.
+const EDGE_REACH: usize = 5;
 
-/// Average colour of a rectangle of a cairo image (bytes B, G, R, A; pages
-/// are opaque, so the alpha is ignored), `#rrggbb`.
-fn average_color(
+type Rgb = [u8; 3];
+
+/// The middle value, the lower one of an even count.
+fn median(values: &mut [u8]) -> u8 {
+    let middle = (values.len() - 1) / 2;
+    *values.select_nth_unstable(middle).1
+}
+
+fn median_color(colors: &[Rgb]) -> Rgb {
+    [0, 1, 2].map(|channel| {
+        let mut values: Vec<u8> = colors.iter().map(|color| color[channel]).collect();
+        median(&mut values)
+    })
+}
+
+/// Colour of most of a rectangle of a cairo image (bytes B, G, R, A; pages
+/// are opaque, so the alpha is ignored).
+fn band_color(
     data: &[u8],
     stride: usize,
     (left, top): (usize, usize),
     (right, bottom): (usize, usize),
-) -> String {
-    let (mut sum, mut count) = ([0u64; 3], 0u64);
+) -> Rgb {
+    let mut colors = Vec::with_capacity((right - left) * (bottom - top));
     for row in top..bottom {
         let pixels = &data[row * stride + left * 4..row * stride + right * 4];
-        for [blue, green, red, _] in pixels.as_chunks::<4>().0 {
-            sum[0] += u64::from(*red);
-            sum[1] += u64::from(*green);
-            sum[2] += u64::from(*blue);
-            count += 1;
-        }
+        colors.extend(
+            pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|[blue, green, red, _]| [*red, *green, *blue]),
+        );
     }
-    let count = count.max(1);
-    format!(
-        "#{:02x}{:02x}{:02x}",
-        sum[0] / count,
-        sum[1] / count,
-        sum[2] / count
-    )
+    median_color(&colors)
+}
+
+/// Drops what is narrow along an edge, keeps its wide areas and gradients.
+fn edge_colors(samples: &[Rgb]) -> Vec<String> {
+    (0..samples.len())
+        .map(|index| {
+            let end = (index + EDGE_REACH + 1).min(samples.len());
+            let [red, green, blue] = median_color(&samples[index.saturating_sub(EDGE_REACH)..end]);
+            format!("#{red:02x}{green:02x}{blue:02x}")
+        })
+        .collect()
 }
 
 /// Reads the colours along the four edges of a cairo image. `None` when the
@@ -143,14 +167,16 @@ pub fn sample_edges(
         (0..EDGE_SAMPLES).map(move |i| (i * length / EDGE_SAMPLES, (i + 1) * length / EDGE_SAMPLES))
     };
     let across = |top: usize| -> Vec<String> {
-        spans(width)
-            .map(|(a, b)| average_color(data, stride, (a, top), (b, top + EDGE_BAND)))
-            .collect()
+        let samples: Vec<Rgb> = spans(width)
+            .map(|(a, b)| band_color(data, stride, (a, top), (b, top + EDGE_BAND)))
+            .collect();
+        edge_colors(&samples)
     };
     let down = |left: usize| -> Vec<String> {
-        spans(height)
-            .map(|(a, b)| average_color(data, stride, (left, a), (left + EDGE_BAND, b)))
-            .collect()
+        let samples: Vec<Rgb> = spans(height)
+            .map(|(a, b)| band_color(data, stride, (left, a), (left + EDGE_BAND, b)))
+            .collect();
+        edge_colors(&samples)
     };
     Some(PageEdges {
         panel_id: panel_id.to_owned(),
@@ -1028,8 +1054,46 @@ mod tests {
         assert_eq!(edges.bottom[31], "#ff0000");
         assert_eq!(edges.left[31], "#0000ff");
         assert_eq!(edges.right[31], "#ff0000");
-        // One green row in a band of three: averaged, not taken as is.
-        assert_eq!(edges.top[0], "#0055aa");
+        // One green row in a band of three does not decide the colour.
+        assert_eq!(edges.top[0], "#0000ff");
+    }
+
+    /// A dark page with Discord's marks against its left edge, measured on a
+    /// real capture: a 40 px pill near the top, 8 px dots on many servers.
+    #[test]
+    fn small_marks_against_an_edge_are_not_its_colour() {
+        for height in [300, 630] {
+            let white = |y: usize| {
+                (39..79).contains(&y) || (y > 100 && (y - 100) % 56 < 8) // server dots
+            };
+            let image: Vec<u8> = (0..height)
+                .flat_map(|y| {
+                    (0..400).flat_map(move |x| {
+                        if x < 4 && white(y) {
+                            [255, 255, 255, 255]
+                        } else {
+                            [0x32, 0x2d, 0x2c, 255]
+                        }
+                    })
+                })
+                .collect();
+            let edges = sample_edges("p", &image, 1600, 400, height).unwrap();
+            assert!(
+                edges.left.iter().all(|color| color == "#2c2d32"),
+                "{height}: {:?}",
+                edges.left
+            );
+        }
+    }
+
+    #[test]
+    fn a_gradient_along_an_edge_is_kept() {
+        let image: Vec<u8> = (0..64u8)
+            .flat_map(|_| (0..64u8).flat_map(|x| [x * 2, 0, 0, 255]))
+            .collect();
+        let edges = sample_edges("p", &image, 256, 64, 64).unwrap();
+        assert_eq!(edges.top[16], "#000040");
+        assert!(edges.top[31] > edges.top[16]);
     }
 
     #[test]
