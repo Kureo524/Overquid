@@ -134,17 +134,15 @@ fn open(path: &str) -> Result<(), String> {
 
 /// Most children kept for each folder: the largest ones, the rest added up.
 const MAX_CHILDREN: usize = 48;
-/// Depth of the tree returned; deeper folders still count in the sizes.
-const MAX_DEPTH: usize = 6;
-/// Nodes returned in total.
-const MAX_NODES: usize = 20_000;
+/// Depth of the tree returned; deeper folders still count in the sizes and are
+/// scanned on their own when opened. With `MAX_CHILDREN`, this bounds the reply.
+const MAX_DEPTH: usize = 3;
 /// Files looked at before giving up on being exhaustive.
 const MAX_VISITED: u64 = 4_000_000;
 
 struct Scan {
     device: u64,
     visited: u64,
-    nodes: usize,
 }
 
 /// Size of everything under `path`. Stays on its filesystem and does not
@@ -156,7 +154,6 @@ pub fn scan(path: &str) -> Result<Node, String> {
     let mut state = Scan {
         device: metadata.dev(),
         visited: 0,
-        nodes: 1,
     };
     let name = root
         .file_name()
@@ -203,10 +200,6 @@ fn measure(path: &Path, name: String, state: &mut Scan, depth: usize) -> Node {
     children.sort_by_key(|child| std::cmp::Reverse(child.size));
     children.truncate(MAX_CHILDREN);
     if depth + 1 >= MAX_DEPTH {
-        children.clear();
-    }
-    state.nodes += children.len();
-    if state.nodes > MAX_NODES {
         children.clear();
     }
     Node {
@@ -330,6 +323,21 @@ mod tests {
         assert_eq!(tree.children[0].name, "big");
         assert!(!tree.children.iter().any(|n| n.name == "again"));
         assert_eq!(tree.size, tree.children.iter().map(|n| n.size).sum::<u64>());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn keeps_the_top_of_the_tree_and_counts_what_is_below() {
+        let dir = folder("deep");
+        fs::create_dir_all(dir.join("a/b/c")).unwrap();
+        fs::write(dir.join("a/b/c/data"), vec![1u8; 64 * 1024]).unwrap();
+        let tree = scan(at(&dir)).unwrap();
+        let a = &tree.children[0];
+        let b = &a.children[0];
+        assert!(b.dir);
+        assert!(b.children.is_empty());
+        assert!(b.size >= 64 * 1024, "{}", b.size);
+        assert_eq!(tree.size, b.size);
         fs::remove_dir_all(dir).unwrap();
     }
 

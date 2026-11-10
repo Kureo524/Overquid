@@ -1,7 +1,7 @@
 {
   "id": "dev.overquid.space",
   "name": "Disk space",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "See what takes up space in a folder, as a map of rectangles.",
   "entry": "dist/index.html",
   "panel": { "defaultSize": [640, 460], "position": "center" },
