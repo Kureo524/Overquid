@@ -2,6 +2,7 @@
   "id": "dev.overquid.clock",
   "name": "Clock",
   "version": "1.0.0",
+  "description": "The time, always in view.",
   "entry": "dist/index.html",
   "panel": { "defaultSize": [200, 36], "position": "top-right" },
   "permissions": [],

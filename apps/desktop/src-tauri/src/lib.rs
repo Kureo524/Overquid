@@ -1,4 +1,5 @@
 mod active_app;
+mod catalog;
 mod cli;
 mod content_filter;
 mod json_file;
@@ -211,9 +212,61 @@ fn quit_on_signals<R: Runtime>(app: &tauri::AppHandle<R>) {
     }
 }
 
+/// A plugin the settings can manage.
+#[derive(serde::Serialize)]
+struct InstalledPlugin {
+    #[serde(flatten)]
+    manifest: plugins::Manifest,
+    /// In the user's folder: it can be removed.
+    removable: bool,
+}
+
 #[tauri::command(async)]
-fn list_plugins<R: Runtime>(app: tauri::AppHandle<R>) -> Vec<plugins::Manifest> {
-    plugins::list_all(&plugin_roots(&app))
+fn list_plugins<R: Runtime>(app: tauri::AppHandle<R>) -> Vec<InstalledPlugin> {
+    let roots = plugin_roots(&app);
+    plugins::list_all(&roots)
+        .into_iter()
+        .map(|manifest| {
+            let removable = roots
+                .first()
+                .is_some_and(|user| plugins::load_manifest(user, &manifest.id).is_some());
+            InstalledPlugin {
+                manifest,
+                removable,
+            }
+        })
+        .collect()
+}
+
+/// The folder plugins are installed to.
+fn user_plugins<R: Runtime>(app: &tauri::AppHandle<R>) -> Result<std::path::PathBuf, String> {
+    plugin_roots(app)
+        .into_iter()
+        .next()
+        .ok_or_else(|| "no folder for plugins".to_owned())
+}
+
+/// Plugins offered by the official catalog (ADR 0009).
+#[tauri::command(async)]
+fn plugin_catalog() -> Result<Vec<catalog::Entry>, String> {
+    catalog::fetch_index(&catalog::base_url(), &catalog::http_fetch)
+}
+
+/// Installs or updates a plugin from the catalog.
+#[tauri::command(async)]
+fn install_plugin<R: Runtime>(app: tauri::AppHandle<R>, id: String) -> Result<(), String> {
+    let base = catalog::base_url();
+    let entry = catalog::fetch_index(&base, &catalog::http_fetch)?
+        .into_iter()
+        .find(|entry| entry.manifest.id == id)
+        .ok_or_else(|| format!("'{id}' is not in the catalog"))?;
+    catalog::install(&user_plugins(&app)?, &base, &entry, &catalog::http_fetch)
+}
+
+/// Removes an installed plugin; its data stays, for a later reinstall.
+#[tauri::command(async)]
+fn uninstall_plugin<R: Runtime>(app: tauri::AppHandle<R>, id: String) -> Result<(), String> {
+    catalog::uninstall(&user_plugins(&app)?, &id)
 }
 
 /// Folders holding one sub-folder per plugin, by priority: the user's
@@ -578,6 +631,9 @@ pub fn run() {
             suspend_shortcuts,
             plugin_call,
             list_plugins,
+            plugin_catalog,
+            install_plugin,
+            uninstall_plugin,
             web_panel,
             web_panel_close,
             web_navigate,

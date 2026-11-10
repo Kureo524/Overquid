@@ -6,6 +6,8 @@ export interface PluginManifest {
   id: string;
   name: string;
   version: string;
+  /** One line about the plugin. */
+  description?: string;
   /** Iframe plugin: its entry file. Exactly one of `entry` and `web`. */
   entry?: string;
   /** Web panel: an official web app shown in a native view (ADR 0004). */
@@ -26,7 +28,34 @@ export interface PluginManifest {
   network: string[];
 }
 
-export const listPlugins = () => invoke<PluginManifest[]>('list_plugins');
+/** A plugin on this machine. */
+export interface InstalledPlugin extends PluginManifest {
+  /** Installed by the user; plugins shipped with the app cannot be removed. */
+  removable: boolean;
+}
+
+export const listPlugins = () => invoke<InstalledPlugin[]>('list_plugins');
+
+/** A plugin offered by the official catalog (ADR 0009). */
+export interface CatalogEntry {
+  manifest: PluginManifest;
+}
+
+export const fetchCatalog = () => invoke<CatalogEntry[]>('plugin_catalog');
+export const installPlugin = (id: string) => invoke('install_plugin', { id });
+export const uninstallPlugin = (id: string) => invoke('uninstall_plugin', { id });
+
+/** Whether version `a` is newer than `b` (dotted numbers, the rest ignored). */
+export function isNewer(a: string, b: string): boolean {
+  const parts = (version: string) =>
+    version.split('.').map((part) => Number.parseInt(part, 10) || 0);
+  const [left, right] = [parts(a), parts(b)];
+  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
+    const difference = (left[i] ?? 0) - (right[i] ?? 0);
+    if (difference !== 0) return difference > 0;
+  }
+  return false;
+}
 
 /** URL of a plugin file. Built from Tauri's helper so it follows the platform
  * (`overquid-plugin://localhost/` on Linux, `http://overquid-plugin.localhost/`

@@ -1,0 +1,45 @@
+name: Plugin catalog
+
+# Publishes the plugins of a release to the `plugin-catalog` branch, which the
+# app reads to offer them for install (ADR 0009). The branch only holds build
+# output and is replaced on every run. Run by hand to publish from another ref.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: plugin-catalog
+
+jobs:
+  publish:
+    name: Publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r --filter './plugins/*' --filter @overquid/sdk build
+      - run: node scripts/build-plugin-catalog.mjs "$RUNNER_TEMP/catalog"
+      - name: Replace the plugin-catalog branch
+        working-directory: ${{ runner.temp }}/catalog
+        env:
+          REPOSITORY: ${{ github.repository }}
+          TOKEN: ${{ github.token }}
+          SOURCE: ${{ github.sha }}
+        run: |
+          git init -q -b plugin-catalog
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "chore(plugins): catalog built from $SOURCE"
+          git push --force "https://x-access-token:$TOKEN@github.com/$REPOSITORY.git" plugin-catalog

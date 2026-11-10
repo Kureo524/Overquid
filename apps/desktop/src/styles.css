@@ -783,3 +783,55 @@ kbd.capture {
   background: rgba(217, 100, 108, 0.13);
   color: var(--text);
 }
+
+.plugin-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 12px;
+  border-radius: 12px;
+}
+
+.plugin-row:hover {
+  background: var(--hover);
+}
+
+.plugin-row__info {
+  min-width: 0;
+}
+
+.plugin-row__name {
+  font-weight: 700;
+}
+
+.plugin-row__version {
+  margin-left: 6px;
+  color: var(--text-3);
+  font: 10px var(--font-mono);
+}
+
+.plugin-row__text {
+  margin: 2px 0 0;
+  color: var(--text-2);
+}
+
+.plugin-row__meta {
+  margin: 2px 0 0;
+  color: var(--text-3);
+  font: 10px var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.plugin-row__actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings__empty {
+  margin: 0;
+  padding: 8px 12px;
+  color: var(--text-3);
+}

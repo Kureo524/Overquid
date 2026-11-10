@@ -133,6 +133,20 @@ export function removePanel(state: Overlays, id: string): Overlays {
   );
 }
 
+/** Removes every panel of a plugin, from every overlay. */
+export function removePluginPanels(state: Overlays, pluginId: string): Overlays {
+  const belongs = (panel: string) => panel === pluginId || panel.startsWith(`${pluginId}#`);
+  return {
+    ...state,
+    overlays: state.overlays.map((overlay) => ({
+      ...overlay,
+      panels: Object.fromEntries(
+        Object.entries(overlay.panels).filter(([panel]) => !belongs(panel)),
+      ),
+    })),
+  };
+}
+
 /** The overlay `step` places after (or before) the active one, wrapping around. */
 export function cycle(state: Overlays, step: 1 | -1): Overlays {
   const index = state.overlays.findIndex((overlay) => overlay.id === state.active);
