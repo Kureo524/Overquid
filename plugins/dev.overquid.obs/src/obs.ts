@@ -13,6 +13,12 @@ const hashed = (text: string) => toBase64(sha256(new TextEncoder().encode(text))
 export const authenticationFor = (password: string, salt: string, challenge: string) =>
   hashed(hashed(password + salt) + challenge);
 
+/** A password for an OBS the plugin starts itself: 24 random hex digits. */
+export function randomPassword(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 type Pending = { resolve: (value: Record<string, unknown>) => void; reject: (e: Error) => void };
 
 export interface ObsHandlers {

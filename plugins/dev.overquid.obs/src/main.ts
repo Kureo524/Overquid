@@ -1,5 +1,5 @@
 import { connect } from '@overquid/sdk';
-import { ObsConnection } from './obs';
+import { ObsConnection, randomPassword } from './obs';
 import './style.css';
 
 const overquid = connect();
@@ -20,6 +20,18 @@ const streamButton = element<HTMLButtonElement>('stream');
 const recordButton = element<HTMLButtonElement>('record');
 const sceneList = element('scenes');
 const inputList = element('inputs');
+const launchView = element('launch');
+const startButton = element<HTMLButtonElement>('start');
+const workspaceField = element<HTMLInputElement>('workspace');
+const preview = element<HTMLImageElement>('preview');
+
+/** OBS's desktop entry, the same for a distribution package and the Flatpak. */
+const OBS_APP = 'com.obsproject.Studio';
+/** How long OBS gets to start before the plugin stops knocking. */
+const LAUNCH_PATIENCE = 45_000;
+const RETRY_EVERY = 1500;
+/** Pause between two images of the live view: about ten a second at most. */
+const PREVIEW_PAUSE = 100;
 
 let obs: ObsConnection | null = null;
 let scene = '';
@@ -28,7 +40,39 @@ let inputs: { name: string; muted: boolean }[] = [];
 let streaming = false;
 let recording = false;
 
+/** When to stop retrying after starting OBS; 0 when not waiting for it. */
+let waitingUntil = 0;
+
 const report = (error: unknown) => console.error('OBS:', error);
+
+/** Shows the current scene, one image after the other, while the panel is visible. */
+async function watch(connection: ObsConnection) {
+  while (obs === connection && overquid.visible) {
+    try {
+      const width = Math.round(preview.clientWidth * devicePixelRatio) || 640;
+      const answer = await connection.request('GetSourceScreenshot', {
+        sourceName: scene,
+        imageFormat: 'jpg',
+        imageWidth: Math.min(1920, Math.max(160, width)),
+        imageCompressionQuality: 70,
+      });
+      if (obs !== connection) return;
+      preview.src = answer.imageData as string;
+      preview.hidden = false;
+    } catch {
+      // No scene yet, or OBS is busy: try again a little later.
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    await new Promise((resolve) => setTimeout(resolve, PREVIEW_PAUSE));
+  }
+  watching = false;
+}
+let watching = false;
+function startWatching() {
+  if (!obs || watching || !overquid.visible) return;
+  watching = true;
+  void watch(obs);
+}
 
 function renderOutputs() {
   streamButton.textContent = streaming ? 'Stop stream' : 'Start stream';
@@ -130,23 +174,39 @@ function show(connected: boolean) {
   connectView.hidden = connected;
   controls.hidden = !connected;
   connectButton.disabled = false;
+  startButton.disabled = false;
+  if (!connected) preview.hidden = true;
 }
 
 function start() {
   obs?.close();
   connectButton.disabled = true;
-  status.textContent = 'Connecting…';
+  startButton.disabled = true;
+  if (!waitingUntil) status.textContent = 'Connecting…';
   const port = Number(portField.value) || 4455;
   const password = passwordField.value;
   const connection = new ObsConnection(port, password, {
     onConnected: () => {
+      waitingUntil = 0;
       show(true);
       overquid.storage.set('connection', { port, password }).catch(report);
-      void loadState(connection).catch(report);
+      void loadState(connection).then(startWatching).catch(report);
     },
     onClosed: (reason) => {
       if (obs !== connection) return;
       obs = null;
+      watching = false;
+      if (waitingUntil && reason !== 'Wrong password') {
+        if (Date.now() < waitingUntil) {
+          setTimeout(() => {
+            if (waitingUntil && !obs) start();
+          }, RETRY_EVERY);
+          return;
+        }
+        reason =
+          'OBS started, but its WebSocket server is off. In OBS, once: Tools › WebSocket Server Settings › Enable.';
+      }
+      waitingUntil = 0;
       status.textContent = reason;
       show(false);
     },
@@ -155,7 +215,44 @@ function start() {
   obs = connection;
 }
 
-connectButton.addEventListener('click', start);
+/** Starts OBS with a password of the plugin's own, then connects as soon as it answers. */
+async function launch() {
+  startButton.disabled = true;
+  const workspace = workspaceField.value.trim();
+  let password = await overquid.storage.get<string>('launchPassword').catch(() => undefined);
+  if (!password) {
+    password = randomPassword();
+    await overquid.storage.set('launchPassword', password).catch(report);
+  }
+  overquid.storage.set('workspace', workspace).catch(report);
+  const port = Number(portField.value) || 4455;
+  try {
+    await overquid.apps.launch(OBS_APP, {
+      args: [
+        '--websocket_port',
+        String(port),
+        '--websocket_password',
+        password,
+        ...(workspace ? [] : ['--minimize-to-tray']),
+      ],
+      ...(workspace ? { workspace } : {}),
+    });
+  } catch (error) {
+    status.textContent = String(error).replace(/^.*Error: /, '');
+    startButton.disabled = false;
+    return;
+  }
+  passwordField.value = password;
+  status.textContent = 'Starting OBS…';
+  waitingUntil = Date.now() + LAUNCH_PATIENCE;
+  start();
+}
+
+connectButton.addEventListener('click', () => {
+  waitingUntil = 0;
+  start();
+});
+startButton.addEventListener('click', () => void launch());
 passwordField.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') start();
 });
@@ -168,6 +265,7 @@ recordButton.addEventListener('click', () => {
 element('disconnect').addEventListener('click', () => {
   obs?.close();
   obs = null;
+  watching = false;
   status.textContent = 'Not connected';
   show(false);
 });
@@ -180,9 +278,14 @@ if (saved) {
   passwordField.value = saved.password;
 }
 
+const workspace = await overquid.storage.get<string>('workspace').catch(() => undefined);
+workspaceField.value = workspace ?? 'special:obs';
+launchView.hidden = !(await overquid.apps.installed(OBS_APP).catch(() => false));
+
 /** Reconnects by itself when the panel comes back and OBS is running. */
 function reconnect() {
-  if (saved && !obs) start();
+  if (obs) startWatching();
+  else if (saved && !waitingUntil) start();
 }
 overquid.onShow(reconnect);
 if (overquid.visible) reconnect();

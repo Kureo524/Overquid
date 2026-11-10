@@ -8,6 +8,17 @@
   <body>
     <section id="connect" class="connect">
       <p id="status" class="dim">Not connected</p>
+      <div id="launch" class="launch" hidden>
+        <button id="start" type="button" class="primary">Start OBS</button>
+        <label
+          >Workspace <input id="workspace" type="text" placeholder="none" spellcheck="false"
+        /></label>
+        <p class="dim hint">
+          On Hyprland, OBS starts on this workspace, out of your way (special:obs is a hidden one).
+          Without one, it starts minimised to the tray.
+        </p>
+        <h2>OBS is already running</h2>
+      </div>
       <div class="row">
         <label>Port <input id="port" type="number" min="1" max="65535" value="4455" /></label>
         <label class="grow"
@@ -18,6 +29,7 @@
       <p class="dim hint">In OBS: Tools › WebSocket Server Settings › Enable.</p>
     </section>
     <section id="controls" hidden>
+      <img id="preview" class="preview" alt="Live view of the current scene" hidden />
       <div class="row">
         <button id="stream" type="button" class="output"></button>
         <button id="record" type="button" class="output"></button>
