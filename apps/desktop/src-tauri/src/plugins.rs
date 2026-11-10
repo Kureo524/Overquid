@@ -151,6 +151,9 @@ pub struct Manifest {
     pub permissions: Vec<Permission>,
     #[serde(default)]
     pub network: Vec<String>,
+    /// Desktop entries of the applications the plugin may start (ADR 0013).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub apps: Vec<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -352,6 +355,8 @@ pub fn call(
         }
         "notify" => Some(Permission::Notifications),
         other if other.starts_with("files.") => Some(Permission::Files),
+        // Limited by the manifest's `apps` list instead of a permission.
+        "apps.installed" | "apps.launch" => None,
         other => return Err(format!("unknown method '{other}'")),
     };
     if let Some(permission) = required
@@ -397,6 +402,7 @@ pub fn call(
             (host.notify)(&format!("{} · {title}", manifest.name), &body).map(|()| Value::Null)
         }
         other if other.starts_with("files.") => crate::files::call(other, args),
+        "apps.installed" | "apps.launch" => crate::apps::call(&manifest.apps, method, args),
         _ => unreachable!("methods are matched above"),
     }
 }

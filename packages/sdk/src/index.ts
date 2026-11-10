@@ -16,10 +16,12 @@ export {
   connect,
   createClient,
   OverquidError,
+  type Apps,
   type FileEntry,
   type Files,
   type FolderListing,
   type Json,
+  type LaunchOptions,
   type Notification,
   type SpaceNode,
   type OverquidClient,
@@ -57,4 +59,6 @@ export interface PluginManifest {
    * `api.example.com`, `example.com:8443`, or `archipelago.gg:*` for any port.
    */
   network?: string[];
+  /** Desktop entries of the applications the plugin may start, such as `com.obsproject.Studio`. */
+  apps?: string[];
 }

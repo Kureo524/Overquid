@@ -26,6 +26,8 @@ export interface PluginManifest {
   };
   permissions: string[];
   network: string[];
+  /** Desktop entries of the applications the plugin may start. */
+  apps?: string[];
 }
 
 /** A plugin on this machine. */
