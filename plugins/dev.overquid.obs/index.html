@@ -28,6 +28,14 @@
       <button id="connect-button" type="button" class="primary">Connect</button>
       <p class="dim hint">In OBS: Tools › WebSocket Server Settings › Enable.</p>
     </section>
+    <section id="window" class="window" hidden>
+      <div class="row">
+        <button id="window-close" type="button">Back to the controls</button>
+        <span id="window-status" class="dim grow"></span>
+        <span class="dim hint">OBS needs room: enlarge the panel, or double-click its edge.</span>
+      </div>
+      <div id="dock" class="dock"></div>
+    </section>
     <section id="controls" hidden>
       <img id="preview" class="preview" alt="Live view of the current scene" hidden />
       <div class="row">
@@ -38,6 +46,7 @@
       <ul id="scenes" class="list"></ul>
       <h2>Audio</h2>
       <ul id="inputs" class="list"></ul>
+      <button id="window-open" type="button">Use OBS here</button>
       <button id="disconnect" type="button" class="link">Disconnect</button>
     </section>
   </body>

@@ -17,6 +17,7 @@ export {
   createClient,
   OverquidError,
   type Apps,
+  type DockRect,
   type FileEntry,
   type Files,
   type FolderListing,

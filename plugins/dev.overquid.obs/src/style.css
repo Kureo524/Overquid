@@ -158,3 +158,15 @@ button.primary {
   background: rgba(11, 12, 17, 0.7);
   object-fit: contain;
 }
+.window {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+/* Left empty: OBS's own window shows through the overlay here. */
+.dock {
+  flex: 1;
+  min-height: 0;
+}

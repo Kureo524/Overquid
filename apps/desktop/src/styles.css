@@ -49,6 +49,20 @@ body {
   animation: appear 0.14s ease-out;
 }
 
+/* A window shown through the overlay (dock.ts): the dimming moves to an
+   element that can be cut around it. */
+.stage[data-docked] {
+  background: none;
+}
+
+.dock-veil {
+  position: fixed;
+  z-index: -1;
+  inset: 0;
+  background: var(--veil);
+  pointer-events: none;
+}
+
 .glass {
   position: relative;
   overflow: hidden;

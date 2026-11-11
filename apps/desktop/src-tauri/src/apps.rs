@@ -158,6 +158,93 @@ fn launch(command: &[String], workspace: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
+/// Where a docked window goes when it leaves the overlay.
+const DEFAULT_DOCK_WORKSPACE: &str = "special:overquid";
+
+/// The Lua steps placing `app`'s window at `rect` (x, y, width, height on
+/// screen) on the current workspace, or sending it to `workspace` when `rect`
+/// is `None`. Nothing takes the focus. The window is moved in a step of its
+/// own: resizing keeps its centre, and it may refuse to get that small.
+pub fn dock_script(app: &str, rect: Option<(i32, i32, i32, i32)>, workspace: &str) -> Vec<String> {
+    let window = format!("class:{app}");
+    let step = |dispatcher: String| format!("hl.dispatch(hl.dsp.window.{dispatcher})");
+    match rect {
+        None => vec![step(format!(
+            "move({{window=\"{window}\", workspace=\"{workspace}\", follow=false}})"
+        ))],
+        Some((x, y, width, height)) => vec![
+            [
+                step(format!("float({{action=\"on\", window=\"{window}\"}})")),
+                step(format!(
+                    "move({{window=\"{window}\", workspace=\"e+0\", follow=false}})"
+                )),
+                step(format!(
+                    "resize({{window=\"{window}\", x={width}, y={height}}})"
+                )),
+            ]
+            .join("; "),
+            step(format!(
+                "move({{window=\"{window}\", x={x}, y={y}, relative=false}})"
+            )),
+        ],
+    }
+}
+
+fn hyprctl_json(what: &str) -> Option<Value> {
+    let output = Command::new("hyprctl").args([what, "-j"]).output().ok()?;
+    serde_json::from_slice(&output.stdout).ok()
+}
+
+/// Puts `app`'s window under the overlay at `rect` (in the overlay's pixels),
+/// or away on `workspace` (ADR 0014). Hyprland only.
+pub fn dock(
+    app: &str,
+    rect: Option<(i32, i32, i32, i32)>,
+    workspace: Option<&str>,
+) -> Result<(), String> {
+    let workspace = workspace.unwrap_or(DEFAULT_DOCK_WORKSPACE);
+    if !is_valid_app(app) || !is_valid_workspace(workspace) {
+        return Err("not an application or a workspace name".into());
+    }
+    if !on_hyprland() {
+        return Err("showing a window in a panel needs Hyprland".into());
+    }
+    let has_window = hyprctl_json("clients")
+        .and_then(|clients| {
+            Some(
+                clients
+                    .as_array()?
+                    .iter()
+                    .any(|client| client.get("class").and_then(Value::as_str) == Some(app)),
+            )
+        })
+        .unwrap_or(false);
+    if !has_window {
+        return Err(format!("{app} has no window"));
+    }
+    // The overlay covers the focused screen: its pixels start at that screen's corner.
+    let origin = hyprctl_json("monitors")
+        .and_then(|monitors| {
+            let monitor = monitors
+                .as_array()?
+                .iter()
+                .find(|monitor| monitor.get("focused") == Some(&Value::Bool(true)))?
+                .clone();
+            Some((
+                monitor.get("x")?.as_i64()? as i32,
+                monitor.get("y")?.as_i64()? as i32,
+            ))
+        })
+        .unwrap_or((0, 0));
+    let rect = rect.map(|(x, y, width, height)| (x + origin.0, y + origin.1, width, height));
+    for script in dock_script(app, rect, workspace) {
+        if !hyprctl(&["eval", &script]) {
+            return Err("Hyprland refused to move the window".into());
+        }
+    }
+    Ok(())
+}
+
 fn arguments(args: &Value) -> Result<Vec<String>, String> {
     let Some(list) = args.get("args") else {
         return Ok(Vec::new());
@@ -256,6 +343,27 @@ mod tests {
         assert!(arguments(&json!({ "args": [1] })).is_err());
         assert!(arguments(&json!({ "args": ["x".repeat(MAX_ARG_LEN + 1)] })).is_err());
         assert!(arguments(&json!({ "args": vec!["a"; MAX_ARGS + 1] })).is_err());
+    }
+
+    #[test]
+    fn docking_floats_places_and_sends_away() {
+        assert_eq!(
+            dock_script("com.example.App", Some((10, 20, 300, 200)), "special:x"),
+            [
+                "hl.dispatch(hl.dsp.window.float({action=\"on\", window=\"class:com.example.App\"})); \
+                 hl.dispatch(hl.dsp.window.move({window=\"class:com.example.App\", workspace=\"e+0\", follow=false})); \
+                 hl.dispatch(hl.dsp.window.resize({window=\"class:com.example.App\", x=300, y=200}))",
+                "hl.dispatch(hl.dsp.window.move({window=\"class:com.example.App\", x=10, y=20, relative=false}))"
+            ]
+        );
+        assert_eq!(
+            dock_script("com.example.App", None, "special:x"),
+            [
+                "hl.dispatch(hl.dsp.window.move({window=\"class:com.example.App\", workspace=\"special:x\", follow=false}))"
+            ]
+        );
+        assert!(dock("../x", None, None).is_err());
+        assert!(dock("com.example.App", None, Some("1; rm")).is_err());
     }
 
     #[test]

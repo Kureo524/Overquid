@@ -61,6 +61,19 @@ export interface LaunchOptions {
 export interface Apps {
   installed(app: string): Promise<boolean>;
   launch(app: string, options?: LaunchOptions): Promise<void>;
+  /**
+   * Shows the application's window inside the plugin's panel, at `rect` of the
+   * plugin's page (CSS pixels), where the page must draw nothing. `null` sends
+   * the window away, to `workspace`. Hyprland only: rejects elsewhere.
+   */
+  dock(app: string, rect: DockRect | null, options?: { workspace?: string }): Promise<void>;
+}
+
+export interface DockRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 /**
@@ -190,6 +203,9 @@ export function createClient(transport: Transport): OverquidClient {
       installed: (app) => call<boolean>('apps.installed', { app }),
       launch: async (app, options = {}) => {
         await call('apps.launch', { app, ...options });
+      },
+      dock: async (app, rect, options = {}) => {
+        await call('apps.dock', { app, rect, ...options });
       },
     },
     storage: {

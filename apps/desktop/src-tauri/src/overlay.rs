@@ -45,6 +45,15 @@ pub struct Status {
     pub visibility: Visibility,
 }
 
+/// A see-through part of the overlay with another application's window
+/// underneath (ADR 0014): clicks there go to that window, except on `covers`,
+/// the panels in front.
+#[derive(Debug, Clone)]
+pub struct Cut {
+    pub rect: Rect,
+    pub covers: Vec<Rect>,
+}
+
 pub struct Overlay {
     mode: Mode,
     inner: Mutex<Inner>,
@@ -53,6 +62,10 @@ pub struct Overlay {
 struct Inner {
     visibility: Visibility,
     pinned: Vec<Rect>,
+    /// See-through areas, by the plugin that asked for them.
+    cuts: Vec<(String, Cut)>,
+    /// Whether the keyboard was last left to the windows under the cuts.
+    keyboard_shared: bool,
     keymap: Keymap,
     /// The screen the user chose (`MonitorInfo::id`); `None` lets the desktop choose.
     monitor: Option<String>,
@@ -76,6 +89,8 @@ impl Overlay {
             inner: Mutex::new(Inner {
                 visibility: Visibility::Hidden,
                 pinned: Vec::new(),
+                cuts: Vec::new(),
+                keyboard_shared: false,
                 keymap: Keymap::default(),
                 monitor: None,
                 shortcuts_suspended: false,
@@ -124,6 +139,22 @@ impl Overlay {
             } else {
                 state::after_pinned_change(inner.visibility, has_pinned)
             }
+        })
+    }
+
+    /// Sets or removes `owner`'s see-through area.
+    pub fn set_cut<R: Runtime>(
+        &self,
+        window: &WebviewWindow<R>,
+        owner: &str,
+        cut: Option<Cut>,
+    ) -> tauri::Result<()> {
+        self.transition(window, |inner| {
+            inner.cuts.retain(|(known, _)| known != owner);
+            if let Some(cut) = cut {
+                inner.cuts.push((owner.to_owned(), cut));
+            }
+            inner.visibility
         })
     }
 
@@ -186,13 +217,23 @@ impl Overlay {
         window: &WebviewWindow<R>,
         next: impl FnOnce(&mut Inner) -> Visibility,
     ) -> tauri::Result<()> {
-        let (previous, visibility, pinned) = {
+        let (previous, visibility, pinned, cuts, newly_shared) = {
             let mut inner = self.lock();
             let previous = inner.visibility;
             inner.visibility = next(&mut inner);
-            (previous, inner.visibility, inner.pinned.clone())
+            let cuts: Vec<Cut> = inner.cuts.iter().map(|(_, cut)| cut.clone()).collect();
+            let shared = inner.visibility == Visibility::Summoned && !cuts.is_empty();
+            let newly_shared = shared && !inner.keyboard_shared;
+            inner.keyboard_shared = shared;
+            (
+                previous,
+                inner.visibility,
+                inner.pinned.clone(),
+                cuts,
+                newly_shared,
+            )
         };
-        self.render(window, previous, visibility, pinned)
+        self.render(window, previous, visibility, pinned, cuts, newly_shared)
     }
 
     fn render<R: Runtime>(
@@ -201,6 +242,8 @@ impl Overlay {
         previous: Visibility,
         visibility: Visibility,
         pinned: Vec<Rect>,
+        cuts: Vec<Cut>,
+        newly_shared: bool,
     ) -> tauri::Result<()> {
         match visibility {
             Visibility::Hidden => window.hide()?,
@@ -213,13 +256,18 @@ impl Overlay {
                         window.hide()?;
                     }
                 }
-                set_input_region(window, None)?;
+                // A window shown through the overlay must be able to take the
+                // keyboard when clicked: no exclusive hold while there is one.
+                let shared = !cuts.is_empty();
+                set_input_region(window, None, cuts)?;
                 window.show()?;
                 if self.mode == Mode::Fallback {
                     self.cover(window)?;
                     window.set_focus()?;
-                } else {
+                } else if !shared {
                     set_keyboard(window, Keyboard::Exclusive)?;
+                } else if newly_shared {
+                    set_keyboard(window, Keyboard::Release)?;
                 }
             }
             Visibility::Pinned => {
@@ -238,7 +286,7 @@ impl Overlay {
                         window.show()?;
                     }
                 }
-                set_input_region(window, Some(pinned))?;
+                set_input_region(window, Some(pinned), cuts)?;
                 // Coming from summoned, the overlay still holds the keyboard:
                 // give it back to the app underneath right away.
                 if self.mode == Mode::LayerShell && previous != Visibility::Pinned {
@@ -390,25 +438,49 @@ fn set_keyboard<R: Runtime>(window: &WebviewWindow<R>, keyboard: Keyboard) -> ta
 fn set_input_region<R: Runtime>(
     window: &WebviewWindow<R>,
     rects: Option<Vec<Rect>>,
+    cuts: Vec<Cut>,
 ) -> tauri::Result<()> {
     #[cfg(target_os = "linux")]
     return on_gtk_window(window, move |gtk_window| {
         use gtk::cairo::{RectangleInt, Region};
         use gtk::prelude::*;
-        let region = rects.map(|rects| {
-            let region = Region::create();
-            for (x, y, width, height) in rects.into_iter().filter_map(Rect::to_pixels) {
-                // Only fails on allocation failure; an incomplete region is
-                // still better than none.
-                let _ = region.union_rectangle(&RectangleInt::new(x, y, width, height));
+        if rects.is_none() && cuts.is_empty() {
+            gtk_window.input_shape_combine_region(None);
+            return;
+        }
+        // Only fails on allocation failure; an incomplete region is still
+        // better than none.
+        let rectangle = |(x, y, width, height)| RectangleInt::new(x, y, width, height);
+        let region = match rects {
+            Some(rects) => {
+                let region = Region::create();
+                for pixels in rects.into_iter().filter_map(Rect::to_pixels) {
+                    let _ = region.union_rectangle(&rectangle(pixels));
+                }
+                region
             }
-            region
-        });
-        gtk_window.input_shape_combine_region(region.as_ref());
+            None => Region::create_rectangle(&RectangleInt::new(
+                0,
+                0,
+                gtk_window.allocated_width(),
+                gtk_window.allocated_height(),
+            )),
+        };
+        for cut in cuts {
+            let Some(pixels) = cut.rect.to_pixels() else {
+                continue;
+            };
+            let hole = Region::create_rectangle(&rectangle(pixels));
+            for cover in cut.covers.into_iter().filter_map(Rect::to_pixels) {
+                let _ = hole.subtract_rectangle(&rectangle(cover));
+            }
+            let _ = region.subtract(&hole);
+        }
+        gtk_window.input_shape_combine_region(Some(&region));
     });
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (window, rects);
+        let _ = (window, rects, cuts);
         Ok(())
     }
 }

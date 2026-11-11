@@ -42,6 +42,37 @@ fn set_pinned_regions<R: Runtime>(
     overlay.set_pinned(&window, rects, restore)
 }
 
+/// Shows the window of an application a plugin declares through the overlay,
+/// at `rect` (CSS pixels in the overlay window), or sends it away when `rect`
+/// is `None` (ADR 0014). `covers` are the panels in front of that area.
+#[tauri::command(async)]
+fn dock_window<R: Runtime>(
+    window: WebviewWindow<R>,
+    overlay: State<'_, Overlay>,
+    plugin_id: String,
+    app_id: String,
+    rect: Option<Rect>,
+    covers: Vec<Rect>,
+    workspace: Option<String>,
+) -> Result<(), String> {
+    let (_, manifest) = plugins::find(&plugin_roots(window.app_handle()), &plugin_id)
+        .ok_or_else(|| format!("unknown plugin '{plugin_id}'"))?;
+    if !manifest.apps.contains(&app_id) {
+        return Err(format!("'{app_id}' is not in the manifest's apps"));
+    }
+    let pixels = rect.and_then(Rect::to_pixels);
+    let placed = apps::dock(&app_id, pixels, workspace.as_deref());
+    // No hole in the overlay unless there is a window to see through it.
+    let cut = match (&placed, rect) {
+        (Ok(()), Some(rect)) if pixels.is_some() => Some(overlay::Cut { rect, covers }),
+        _ => None,
+    };
+    overlay
+        .set_cut(&window, &plugin_id, cut)
+        .map_err(|error| error.to_string())?;
+    placed
+}
+
 #[tauri::command(async)]
 fn load_layout(store: State<'_, LayoutStore>) -> Option<serde_json::Value> {
     store.load()
@@ -653,6 +684,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             overlay_status,
             set_pinned_regions,
+            dock_window,
             release_keyboard,
             load_layout,
             save_layout,
