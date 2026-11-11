@@ -75,6 +75,39 @@ impl Accel {
         parts.join(" + ")
     }
 
+    /// Every way to write the shortcut for Hyprland. `hl.unbind` only finds a
+    /// binding written with its modifiers in the same order (0.56).
+    fn hyprland_spellings(&self) -> Vec<String> {
+        let mods: Vec<&str> = [
+            (self.ctrl, "CTRL"),
+            (self.shift, "SHIFT"),
+            (self.alt, "ALT"),
+            (self.logo, "SUPER"),
+        ]
+        .into_iter()
+        .filter_map(|(on, name)| on.then_some(name))
+        .collect();
+        let mut orders: Vec<Vec<&str>> = vec![Vec::new()];
+        for _ in 0..mods.len() {
+            orders = orders
+                .into_iter()
+                .flat_map(|order| {
+                    mods.iter()
+                        .filter(|name| !order.contains(*name))
+                        .map(|name| [order.as_slice(), &[*name]].concat())
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+        }
+        orders
+            .into_iter()
+            .map(|mut order| {
+                order.push(&self.key);
+                order.join(" + ")
+            })
+            .collect()
+    }
+
     fn gnome(&self) -> String {
         let mut text = String::new();
         for (on, name) in [
@@ -229,7 +262,12 @@ fn lua_string(text: &str) -> String {
 
 /// Lua run by Hyprland (0.56 and later) to replace a shortcut.
 fn hyprland_script(remove: &Accel, add: Option<(&Accel, &str)>) -> String {
-    let mut script = format!("hl.unbind({})", lua_string(&remove.hyprland()));
+    let unbinds: Vec<String> = remove
+        .hyprland_spellings()
+        .iter()
+        .map(|spelling| format!("hl.unbind({})", lua_string(spelling)))
+        .collect();
+    let mut script = unbinds.join("; ");
     if let Some((accel, command)) = add {
         script.push_str(&format!(
             "; hl.bind({}, hl.dsp.exec_cmd({}))",
@@ -435,9 +473,21 @@ mod tests {
                 &accel("Alt+Shift+X"),
                 Some((&accel("Super+O"), "/a b/overquid toggle"))
             ),
-            "hl.unbind(\"SHIFT + ALT + X\"); hl.bind(\"SUPER + O\", hl.dsp.exec_cmd(\"/a b/overquid toggle\"))"
+            "hl.unbind(\"SHIFT + ALT + X\"); hl.unbind(\"ALT + SHIFT + X\"); hl.bind(\"SUPER + O\", hl.dsp.exec_cmd(\"/a b/overquid toggle\"))"
         );
         assert_eq!(hyprland_script(&accel("F1"), None), "hl.unbind(\"F1\")");
+    }
+
+    #[test]
+    fn unbinds_every_order_of_the_modifiers() {
+        assert_eq!(accel("F1").hyprland_spellings(), ["F1"]);
+        let spellings = accel("Ctrl+Shift+Alt+X").hyprland_spellings();
+        assert_eq!(spellings.len(), 6);
+        assert!(spellings.contains(&"ALT + CTRL + SHIFT + X".to_owned()));
+        assert_eq!(
+            accel("Ctrl+Shift+Alt+Super+X").hyprland_spellings().len(),
+            24
+        );
     }
 
     #[test]
