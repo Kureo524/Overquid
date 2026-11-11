@@ -204,7 +204,7 @@ function start() {
           return;
         }
         reason =
-          'OBS started, but its WebSocket server is off. In OBS, once: Tools › WebSocket Server Settings › Enable.';
+          'OBS started but does not answer. It may be asking something on its workspace, or its WebSocket server is off: in OBS, once, Tools › WebSocket Server Settings › Enable.';
       }
       waitingUntil = 0;
       status.textContent = reason;
@@ -233,6 +233,8 @@ async function launch() {
         String(port),
         '--websocket_password',
         password,
+        // Out of sight, nobody would see OBS ask about its last shutdown.
+        '--disable-shutdown-check',
         ...(workspace ? [] : ['--minimize-to-tray']),
       ],
       ...(workspace ? { workspace } : {}),
