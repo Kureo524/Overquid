@@ -1,0 +1,10 @@
+{
+  "id": "dev.overquid.pomodoro",
+  "name": "Pomodoro",
+  "version": "1.0.0",
+  "description": "A focus timer with work and break rounds.",
+  "entry": "dist/index.html",
+  "panel": { "defaultSize": [240, 150], "position": "top-right" },
+  "permissions": ["storage", "notifications"],
+  "network": []
+}

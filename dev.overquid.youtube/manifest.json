@@ -1,0 +1,16 @@
+{
+  "id": "dev.overquid.youtube",
+  "name": "YouTube",
+  "version": "1.0.0",
+  "description": "The official YouTube site in a panel.",
+  "web": {
+    "url": "https://www.youtube.com/",
+    "hosts": ["youtube.com", "*.youtube.com", "google.com", "*.google.com"],
+    "pauseOnHide": true
+  },
+  "panel": {
+    "defaultSize": [640, 400],
+    "position": "bottom-right",
+    "multiple": true
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "id": "dev.overquid.browser",
+  "name": "Browser",
+  "version": "1.0.0",
+  "description": "A small web browser with an address bar.",
+  "web": {
+    "url": "https://duckduckgo.com/",
+    "browser": {
+      "search": "https://duckduckgo.com/?q={query}"
+    }
+  },
+  "panel": {
+    "defaultSize": [720, 480],
+    "position": "top-left",
+    "multiple": true
+  }
+}

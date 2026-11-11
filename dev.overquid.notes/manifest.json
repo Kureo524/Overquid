@@ -1,0 +1,13 @@
+{
+  "id": "dev.overquid.notes",
+  "name": "Notes",
+  "version": "1.0.0",
+  "description": "A quick notepad, saved as you type.",
+  "entry": "dist/index.html",
+  "panel": {
+    "defaultSize": [320, 280],
+    "position": "top-left"
+  },
+  "permissions": ["storage"],
+  "network": []
+}

@@ -1,0 +1,10 @@
+{
+  "id": "dev.overquid.files",
+  "name": "Files",
+  "version": "1.0.0",
+  "description": "Browse your folders, open, rename and trash files.",
+  "entry": "dist/index.html",
+  "panel": { "defaultSize": [520, 420], "position": "center", "multiple": true },
+  "permissions": ["storage", "files"],
+  "network": []
+}
