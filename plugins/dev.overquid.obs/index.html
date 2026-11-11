@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>OBS</title>
+    <script type="module" src="./src/main.ts"></script>
+  </head>
+  <body>
+    <section id="connect" class="connect">
+      <p id="status" class="dim">Not connected</p>
+      <div id="launch" class="launch" hidden>
+        <button id="start" type="button" class="primary">Start OBS</button>
+        <label
+          >Workspace <input id="workspace" type="text" placeholder="none" spellcheck="false"
+        /></label>
+        <p class="dim hint">
+          On Hyprland, OBS starts on this workspace, out of your way (special:obs is a hidden one).
+          Without one, it starts minimised to the tray.
+        </p>
+        <h2>OBS is already running</h2>
+      </div>
+      <div class="row">
+        <label>Port <input id="port" type="number" min="1" max="65535" value="4455" /></label>
+        <label class="grow"
+          >Password <input id="password" type="password" autocomplete="off"
+        /></label>
+      </div>
+      <button id="connect-button" type="button" class="primary">Connect</button>
+      <p class="dim hint">In OBS: Tools › WebSocket Server Settings › Enable.</p>
+    </section>
+    <section id="window" class="window" hidden>
+      <div class="row">
+        <button id="window-close" type="button">Back to the controls</button>
+        <span id="window-status" class="dim grow"></span>
+        <span class="dim hint">OBS needs room: enlarge the panel, or double-click its edge.</span>
+      </div>
+      <div id="dock" class="dock"></div>
+    </section>
+    <section id="controls" hidden>
+      <img id="preview" class="preview" alt="Live view of the current scene" hidden />
+      <div class="row">
+        <button id="stream" type="button" class="output"></button>
+        <button id="record" type="button" class="output"></button>
+      </div>
+      <h2>Scenes</h2>
+      <ul id="scenes" class="list"></ul>
+      <h2>Audio</h2>
+      <ul id="inputs" class="list"></ul>
+      <button id="window-open" type="button">Use OBS here</button>
+      <button id="disconnect" type="button" class="link">Disconnect</button>
+    </section>
+  </body>
+</html>

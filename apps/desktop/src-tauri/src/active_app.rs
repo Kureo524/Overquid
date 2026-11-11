@@ -49,10 +49,18 @@ fn hyprland_socket() -> Option<PathBuf> {
     )
 }
 
-/// Calls `on_change` with the focused app whenever it changes, from a
-/// background thread. Reconnects if Hyprland restarts. Does nothing outside
-/// Hyprland.
-pub fn watch(on_change: impl Fn(ActiveApp) + Send + 'static) {
+/// Whether a Hyprland event says its config was just reloaded.
+fn is_config_reload(line: &str) -> bool {
+    line.starts_with("configreloaded>>")
+}
+
+/// Calls `on_change` with the focused app whenever it changes, and `on_reload`
+/// after Hyprland reloads its config, from a background thread. Reconnects if
+/// Hyprland restarts. Does nothing outside Hyprland.
+pub fn watch(
+    on_change: impl Fn(ActiveApp) + Send + 'static,
+    on_reload: impl Fn() + Send + 'static,
+) {
     let Some(socket) = hyprland_socket() else {
         return;
     };
@@ -63,6 +71,9 @@ pub fn watch(on_change: impl Fn(ActiveApp) + Send + 'static) {
                 Ok(stream) => {
                     for line in BufReader::new(stream).lines() {
                         let Ok(line) = line else { break };
+                        if is_config_reload(&line) {
+                            on_reload();
+                        }
                         if let Some(app) = parse_event(&line)
                             && last.as_ref() != Some(&app)
                         {
@@ -100,6 +111,12 @@ mod tests {
         );
         // Titles may hold commas; the class never does.
         assert_eq!(parse_event("activewindow>>firefox,a, b, c"), app("firefox"));
+    }
+
+    #[test]
+    fn reads_config_reloads() {
+        assert!(is_config_reload("configreloaded>>"));
+        assert!(!is_config_reload("activewindow>>code,x"));
     }
 
     #[test]

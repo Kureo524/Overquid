@@ -26,11 +26,83 @@ export interface Notification {
   body?: string;
 }
 
+export interface FileEntry {
+  name: string;
+  dir: boolean;
+  /** A symbolic link; `dir` and `size` describe what it points to. */
+  link: boolean;
+  size: number;
+  /** Seconds since 1970. */
+  modified: number | null;
+}
+
+export interface FolderListing {
+  path: string;
+  parent: string | null;
+  entries: FileEntry[];
+}
+
+export interface SpaceNode {
+  name: string;
+  size: number;
+  dir: boolean;
+  /** The largest ones only; `size` counts everything. */
+  children: SpaceNode[];
+}
+
+export interface LaunchOptions {
+  /** Added after the application's own command. */
+  args?: string[];
+  /** Hyprland workspace to start on, without going there (`3`, `special:obs`). Ignored elsewhere. */
+  workspace?: string;
+}
+
+/** The applications listed in the manifest's `apps`, named by desktop entry. */
+export interface Apps {
+  installed(app: string): Promise<boolean>;
+  launch(app: string, options?: LaunchOptions): Promise<void>;
+  /**
+   * Shows the application's window inside the plugin's panel, at `rect` of the
+   * plugin's page (CSS pixels), where the page must draw nothing. `null` sends
+   * the window away, to `workspace`. Hyprland only: rejects elsewhere.
+   */
+  dock(app: string, rect: DockRect | null, options?: { workspace?: string }): Promise<void>;
+}
+
+export interface DockRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * The user's files. Needs the `files` permission. Plugins see names, sizes and
+ * dates, never what is in a file, and can only delete by moving to the trash.
+ */
+export interface Files {
+  home(): Promise<string>;
+  list(path: string): Promise<FolderListing>;
+  /** Opens with the user's default application. */
+  open(path: string): Promise<void>;
+  rename(path: string, name: string): Promise<void>;
+  mkdir(path: string, name: string): Promise<void>;
+  trash(path: string): Promise<void>;
+  /** What takes up space under `path`. Can take a while on a large disk. */
+  scan(path: string): Promise<SpaceNode>;
+}
+
 export interface OverquidClient {
   /** Called each time the plugin's panel becomes visible. */
   onShow(callback: () => void): Unsubscribe;
   /** Called each time the plugin's panel is hidden. Pause timers and media here. */
   onHide(callback: () => void): Unsubscribe;
+  /**
+   * Called with the overlay's colours, as CSS custom properties (`--accent`,
+   * `--surface`…), now if they are known and on every change. `connect()`
+   * already applies them to the page: use `var(--accent, #8fa4cc)` in your CSS.
+   */
+  onTheme(callback: (tokens: Record<string, string>) => void): Unsubscribe;
   /** Whether the panel is visible right now. */
   readonly visible: boolean;
   /** Data of this plugin, kept by the core. Needs the `storage` permission. */
@@ -40,6 +112,10 @@ export interface OverquidClient {
    * most 5 per minute.
    */
   notify(notification: Notification): Promise<void>;
+  /** The user's files. Needs the `files` permission. */
+  files: Files;
+  /** The applications listed in the manifest's `apps`. */
+  apps: Apps;
   /** Raw call to a core method. Prefer the typed helpers. */
   call<T = unknown>(method: string, args?: unknown): Promise<T>;
 }
@@ -55,10 +131,17 @@ export function createClient(transport: Transport): OverquidClient {
     { resolve: (value: unknown) => void; reject: (error: Error) => void }
   >();
   const listeners = { show: new Set<() => void>(), hide: new Set<() => void>() };
+  const themeListeners = new Set<(tokens: Record<string, string>) => void>();
+  let theme: Record<string, string> | undefined;
   let visible = false;
 
   transport.listen((data) => {
     if (isEvent(data)) {
+      if (data.event === 'theme') {
+        theme = data.tokens;
+        for (const callback of themeListeners) callback(data.tokens);
+        return;
+      }
       visible = data.event === 'show';
       for (const callback of listeners[data.event]) callback();
       return;
@@ -87,12 +170,43 @@ export function createClient(transport: Transport): OverquidClient {
   return {
     onShow: (callback) => subscribe('show', callback),
     onHide: (callback) => subscribe('hide', callback),
+    onTheme: (callback) => {
+      themeListeners.add(callback);
+      if (theme) callback(theme);
+      return () => themeListeners.delete(callback);
+    },
     get visible() {
       return visible;
     },
     call,
     notify: async ({ title, body }) => {
       await call('notify', { title, body });
+    },
+    files: {
+      home: () => call<string>('files.home'),
+      list: (path) => call<FolderListing>('files.list', { path }),
+      open: async (path) => {
+        await call('files.open', { path });
+      },
+      rename: async (path, name) => {
+        await call('files.rename', { path, name });
+      },
+      mkdir: async (path, name) => {
+        await call('files.mkdir', { path, name });
+      },
+      trash: async (path) => {
+        await call('files.trash', { path });
+      },
+      scan: (path) => call<SpaceNode>('files.scan', { path }),
+    },
+    apps: {
+      installed: (app) => call<boolean>('apps.installed', { app }),
+      launch: async (app, options = {}) => {
+        await call('apps.launch', { app, ...options });
+      },
+      dock: async (app, rect, options = {}) => {
+        await call('apps.dock', { app, rect, ...options });
+      },
     },
     storage: {
       get: async <T extends Json>(key: string) => {
@@ -114,13 +228,19 @@ let client: OverquidClient | undefined;
 
 /** The client of this plugin, talking to the overlay that embeds it. */
 export function connect(): OverquidClient {
-  client ??= createClient({
+  if (client) return client;
+  client = createClient({
     post: (message) => window.parent.postMessage(message, '*'),
     listen: (handler) =>
       window.addEventListener('message', (event) => {
         // Only the overlay that embeds the plugin may talk to it.
         if (event.source === window.parent) handler(event.data);
       }),
+  });
+  client.onTheme((tokens) => {
+    for (const [name, value] of Object.entries(tokens)) {
+      document.documentElement.style.setProperty(name, value);
+    }
   });
   return client;
 }

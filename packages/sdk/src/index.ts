@@ -16,8 +16,15 @@ export {
   connect,
   createClient,
   OverquidError,
+  type Apps,
+  type DockRect,
+  type FileEntry,
+  type Files,
+  type FolderListing,
   type Json,
+  type LaunchOptions,
   type Notification,
+  type SpaceNode,
   type OverquidClient,
   type Storage,
   type Transport,
@@ -34,7 +41,7 @@ export {
 } from './protocol';
 
 /** Permissions a plugin can request in its manifest. */
-export type Permission = 'storage' | 'hotkeys' | 'notifications' | 'context' | 'events';
+export type Permission = 'storage' | 'hotkeys' | 'notifications' | 'context' | 'events' | 'files';
 
 /** Shape of a plugin's `manifest.json`. */
 export interface PluginManifest {
@@ -48,6 +55,11 @@ export interface PluginManifest {
     defaultSize?: [width: number, height: number];
   };
   permissions?: Permission[];
-  /** Host names the plugin may reach with `fetch`, e.g. `api.example.com`. */
+  /**
+   * Hosts the plugin may reach with `fetch` (`https`) and `WebSocket` (`wss`):
+   * `api.example.com`, `example.com:8443`, or `archipelago.gg:*` for any port.
+   */
   network?: string[];
+  /** Desktop entries of the applications the plugin may start, such as `com.obsproject.Studio`. */
+  apps?: string[];
 }

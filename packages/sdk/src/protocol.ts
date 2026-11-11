@@ -23,10 +23,10 @@ export interface ReplyMessage {
 }
 
 /** Host → plugin: something happened. */
-export interface EventMessage {
-  overquid: typeof PROTOCOL;
-  event: 'show' | 'hide';
-}
+export type EventMessage =
+  | { overquid: typeof PROTOCOL; event: 'show' | 'hide' }
+  /** The overlay's colours, as CSS custom properties (`--accent`, `--surface`…). */
+  | { overquid: typeof PROTOCOL; event: 'theme'; tokens: Record<string, string> };
 
 const isTagged = (data: unknown): data is Record<string, unknown> =>
   typeof data === 'object' &&
@@ -40,4 +40,7 @@ export const isReply = (data: unknown): data is ReplyMessage =>
   isTagged(data) && typeof data.id === 'number' && !('method' in data);
 
 export const isEvent = (data: unknown): data is EventMessage =>
-  isTagged(data) && (data.event === 'show' || data.event === 'hide');
+  isTagged(data) &&
+  (data.event === 'show' ||
+    data.event === 'hide' ||
+    (data.event === 'theme' && typeof data.tokens === 'object' && data.tokens !== null));

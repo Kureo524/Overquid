@@ -1,0 +1,11 @@
+{
+  "id": "dev.overquid.obs",
+  "name": "OBS",
+  "version": "1.2.0",
+  "description": "Start OBS out of sight, watch its scene live, switch scenes, stream, record and mute sources.",
+  "entry": "dist/index.html",
+  "panel": { "defaultSize": [820, 640], "position": "top-left" },
+  "permissions": ["storage"],
+  "network": ["127.0.0.1:*"],
+  "apps": ["com.obsproject.Studio"]
+}

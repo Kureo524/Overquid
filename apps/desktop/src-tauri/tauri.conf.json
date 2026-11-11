@@ -47,7 +47,9 @@
       "../../../plugins/dev.overquid.todo/manifest.json": "plugins/dev.overquid.todo/manifest.json",
       "../../../plugins/dev.overquid.todo/dist/": "plugins/dev.overquid.todo/dist/",
       "../../../plugins/dev.overquid.pomodoro/manifest.json": "plugins/dev.overquid.pomodoro/manifest.json",
-      "../../../plugins/dev.overquid.pomodoro/dist/": "plugins/dev.overquid.pomodoro/dist/"
+      "../../../plugins/dev.overquid.pomodoro/dist/": "plugins/dev.overquid.pomodoro/dist/",
+      "../../../plugins/dev.overquid.archipelago/manifest.json": "plugins/dev.overquid.archipelago/manifest.json",
+      "../../../plugins/dev.overquid.archipelago/dist/": "plugins/dev.overquid.archipelago/dist/"
     },
     "targets": [
       "deb",
@@ -60,6 +62,7 @@
     "license": "MIT",
     "linux": {
       "deb": {
+        "desktopTemplate": "overquid.desktop",
         "depends": [
           "libgtk-layer-shell0",
           "gstreamer1.0-plugins-good",
@@ -67,6 +70,7 @@
         ]
       },
       "rpm": {
+        "desktopTemplate": "overquid.desktop",
         "depends": [
           "gtk-layer-shell",
           "gstreamer1-plugins-good"

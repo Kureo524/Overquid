@@ -1,5 +1,5 @@
 import { listen } from '@tauri-apps/api/event';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   isInFront,
   layerOf,
@@ -17,11 +17,13 @@ import {
   deleteOverlay,
   loadOverlays,
   removePanel,
+  removePluginPanels,
   renameOverlay,
   saveOverlays,
   overlayForApp,
   switchByName,
   toggleApp,
+  toggleKeep,
   updatePanel,
   STARTER_PANELS,
   type Fill,
@@ -43,7 +45,18 @@ import { Browser } from './Browser';
 import { Panel, type LayerAction } from './Panel';
 import { PluginFrame } from './PluginFrame';
 import { WebSlot } from './WebSlot';
-import { listPlugins, startBroker, type PluginManifest } from './plugins';
+import {
+  broadcastTheme,
+  listPlugins,
+  startBroker,
+  type InstalledPlugin,
+  type PluginManifest,
+} from './plugins';
+import { SettingsWindow } from './settings/SettingsWindow';
+import { setOverlayMonitor, useSettings } from './settings/settings';
+import { applyShortcuts } from './settings/shortcuts';
+import type { Guide } from './snap';
+import { applyTheme, themeTokens } from './theme';
 
 const modeLabel: Record<OverlayMode, string> = {
   'layer-shell': 'Wayland layer-shell',
@@ -104,16 +117,17 @@ function defaultLayout(id: PanelId, plugins: PluginManifest[]): PanelLayout {
 
 /** Installed plugins (null until listed), and the broker relaying their
  * calls (ADR 0003). */
-function usePlugins(): PluginManifest[] | null {
-  const [plugins, setPlugins] = useState<PluginManifest[] | null>(null);
+function usePlugins(): [InstalledPlugin[] | null, () => void] {
+  const [plugins, setPlugins] = useState<InstalledPlugin[] | null>(null);
   useEffect(() => startBroker(), []);
-  useEffect(() => {
+  const refresh = useCallback(() => {
     listPlugins().then(setPlugins, (error: unknown) => {
       console.error('Cannot list plugins:', error);
-      setPlugins([]);
+      setPlugins((known) => known ?? []);
     });
   }, []);
-  return plugins;
+  useEffect(refresh, [refresh]);
+  return [plugins, refresh];
 }
 
 /** Presses inside a web panel's native view, which the page never sees. */
@@ -138,7 +152,8 @@ function useViewport(): Size {
 }
 
 /** What `overquid next|prev|switch NAME` sends (`cli::OverlaySwitch`). */
-type OverlaySwitch = { kind: 'next' } | { kind: 'prev' } | { kind: 'switch'; name: string };
+type OverlaySwitch =
+  { kind: 'next' } | { kind: 'prev' } | { kind: 'keep' } | { kind: 'switch'; name: string };
 
 /**
  * The saved overlays (null until loaded) and a setter that also saves them.
@@ -203,11 +218,20 @@ function useOverlaySwitches(onSwitch: (request: OverlaySwitch) => void) {
 export function App() {
   const { mode, visibility } = useOverlayStatus();
   const viewport = useViewport();
-  const listed = usePlugins();
-  const plugins = listed ?? [];
+  const [settings, updateSettings] = useSettings();
+  const [installed, refreshPlugins] = usePlugins();
+  const listed = installed
+    ? installed.filter((plugin) => !settings.disabledPlugins.includes(plugin.id))
+    : null;
+  const plugins: PluginManifest[] = listed ?? [];
   const defaults = (id: PanelId) => defaultLayout(id, plugins);
   const [overlays, commit] = useOverlays(listed, defaults);
   const layout = overlays ? activeOverlay(overlays).panels : null;
+  // The panel shown full screen. Not saved: it only lasts while the overlay is
+  // summoned, so a pinned panel never takes the whole screen over a game.
+  const [maximized, setMaximized] = useState<PanelId | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [guides, setGuides] = useState<Guide[]>([]);
   const lastRegions = useRef<Rect[] | null>(null);
   const restorePending = useRef(true);
 
@@ -224,6 +248,7 @@ export function App() {
     if (!overlays) return;
     if (request.kind === 'next') changeOverlays(cycle(overlays, 1));
     else if (request.kind === 'prev') changeOverlays(cycle(overlays, -1));
+    else if (request.kind === 'keep') commit(toggleKeep(overlays));
     else changeOverlays(switchByName(overlays, request.name));
   });
 
@@ -242,14 +267,18 @@ export function App() {
   }, [activeApp]);
 
   const inOverlay = (id: PanelId) => layout !== null && id in layout;
+  // Switching overlays leaves the full-screen panel of the previous one behind.
+  const fullScreen = maximized !== null && inOverlay(maximized) ? maximized : null;
   const panel = (id: PanelId) => layout?.[id] ?? defaults(id);
   const summoned = visibility === 'summoned';
   // Pinned panels stay rendered while hidden (the window is unmapped then):
   // their rectangles are needed to bring them back at startup.
-  const visible = (id: PanelId) => inOverlay(id) && (summoned || panel(id).pinned);
+  const kept = overlays !== null && activeOverlay(overlays).keep === true;
+  const stays = (id: PanelId) => panel(id).pinned || kept;
+  const visible = (id: PanelId) => inOverlay(id) && (summoned || stays(id));
   // What the user actually sees (the window is unmapped while hidden).
   const onScreen = (id: PanelId) =>
-    inOverlay(id) && (summoned || (visibility === 'pinned' && panel(id).pinned));
+    inOverlay(id) && (summoned || (visibility === 'pinned' && stays(id)));
 
   // Tell the core where the pinned panels are: in pinned mode they are the
   // only areas that take clicks. The first report after loading the layout
@@ -273,6 +302,30 @@ export function App() {
     }
   }, [summoned]);
 
+  // The overlay opens on the panels, whatever was open when it was closed.
+  useEffect(() => {
+    if (!summoned) setSettingsOpen(false);
+  }, [summoned]);
+
+  useEffect(() => {
+    applyShortcuts(settings.shortcuts);
+  }, [settings.shortcuts]);
+
+  useEffect(() => {
+    void setOverlayMonitor(settings.monitor);
+  }, [settings.monitor]);
+
+  useEffect(() => {
+    const stop = listen('open-settings', () => setSettingsOpen((open) => !open));
+    return () => void stop.then((unlisten) => unlisten());
+  }, []);
+
+  useEffect(() => {
+    const tokens = themeTokens(settings.theme);
+    applyTheme(tokens, document.documentElement);
+    broadcastTheme(tokens);
+  }, [settings.theme]);
+
   // Escape is handled by the core on the GTK window (it must also work while
   // a plugin's iframe has the focus, which this page cannot see).
 
@@ -291,8 +344,13 @@ export function App() {
   const panelProps = (id: PanelId) => ({
     placement: panel(id).placement,
     pinned: panel(id).pinned,
+    kept,
     viewport,
+    snap: settings.snap,
+    onGuides: setGuides,
     layer: layerOf(panel(id)),
+    maximized: summoned && fullScreen === id,
+    onToggleMaximize: () => setMaximized(fullScreen === id ? null : id),
     onTop: panel(id).onTop === true,
     onPlace: (placement: PanelLayout['placement']) => updateLayout(id, { placement }),
     onTogglePin: () => updateLayout(id, { pinned: !panel(id).pinned }),
@@ -309,6 +367,7 @@ export function App() {
       }
     },
     onClose: () => {
+      if (fullScreen === id) setMaximized(null);
       if (overlays) commit(removePanel(overlays, id));
     },
   });
@@ -338,11 +397,14 @@ export function App() {
 
   return (
     <main className={summoned ? 'stage stage--summoned' : 'stage'}>
-      {summoned && overlays && (
+      {summoned && overlays && fullScreen === null && (
         <OverlayBar
           overlays={overlays.overlays}
           active={overlays.active}
           addable={addable}
+          onSettings={() => setSettingsOpen((open) => !open)}
+          kept={kept}
+          onToggleKeep={() => commit(toggleKeep(overlays))}
           onSwitch={(id) => changeOverlays({ ...overlays, active: id })}
           onCreate={() => changeOverlays(createOverlay(overlays))}
           onRename={(id, name) => commit(renameOverlay(overlays, id, name))}
@@ -357,6 +419,25 @@ export function App() {
                 : 0;
             commit(addPanels(overlays, { [id]: { ...defaults(id), z } }));
           }}
+        />
+      )}
+      {guides.map((guide) => (
+        <div
+          key={`${guide.axis}${guide.at}`}
+          className={`snap-guide snap-guide--${guide.axis}`}
+          style={guide.axis === 'x' ? { left: guide.at } : { top: guide.at }}
+        />
+      ))}
+      {summoned && settingsOpen && (
+        <SettingsWindow
+          settings={settings}
+          update={updateSettings}
+          plugins={installed ?? []}
+          onPluginsChanged={refreshPlugins}
+          onPluginRemoved={(id) => {
+            if (overlays) commit(removePluginPanels(overlays, id));
+          }}
+          onClose={() => setSettingsOpen(false)}
         />
       )}
       {visible('welcome') && (
@@ -401,7 +482,7 @@ export function App() {
               ) : plugin.web ? (
                 <WebSlot panelId={id} name={title} visible={onScreen(id)} />
               ) : (
-                <PluginFrame plugin={plugin} visible={onScreen(id)} />
+                <PluginFrame key={plugin.version} plugin={plugin} visible={onScreen(id)} />
               )}
             </Panel>
           );

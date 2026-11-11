@@ -2,6 +2,7 @@
   "id": "dev.overquid.discord",
   "name": "Discord",
   "version": "1.0.0",
+  "description": "The official Discord web app in a panel.",
   "web": {
     "url": "https://discord.com/app",
     "hosts": ["discord.com", "*.discord.com", "discordapp.com", "*.discordapp.com"]

@@ -1,0 +1,114 @@
+/* "Encre" design direction: tiles use the one accent, at varying strength. */
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #e6eaf2;
+  font:
+    12px/1.4 system-ui,
+    sans-serif;
+  user-select: none;
+}
+.toolbar {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+}
+button {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid rgba(230, 234, 242, 0.08);
+  border-radius: 8px;
+  background: rgba(230, 234, 242, 0.04);
+  color: #a2a6b4;
+  font: inherit;
+  cursor: pointer;
+}
+button:hover:not(:disabled) {
+  border-color: rgba(230, 234, 242, 0.15);
+  color: #e6eaf2;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.primary {
+  background: var(--accent-soft, rgba(143, 164, 204, 0.14));
+  color: var(--accent, #8fa4cc);
+}
+.path {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid rgba(230, 234, 242, 0.08);
+  border-radius: 8px;
+  background: rgba(11, 12, 17, 0.7);
+  color: #e6eaf2;
+  font:
+    11px 'IBM Plex Mono',
+    ui-monospace,
+    monospace;
+  outline: none;
+  color-scheme: dark;
+}
+.path:focus {
+  border-color: var(--accent, #8fa4cc);
+}
+.crumbs,
+.status {
+  flex-shrink: 0;
+  overflow: hidden;
+  margin: 0;
+  color: #868a98;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crumbs:empty {
+  display: none;
+}
+.map {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 12px;
+}
+.tile {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  overflow: hidden;
+  padding: 6px;
+  border: 1px solid rgba(11, 12, 17, 0.5);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent, #8fa4cc) var(--share), #14161e);
+  color: #e6eaf2;
+  font-size: 11px;
+  line-height: 1.2;
+  text-align: left;
+}
+.tile:disabled {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent, #8fa4cc) calc(var(--share) / 2), #14161e);
+}
+.tile--dir:hover {
+  border-color: #e6eaf2;
+}
+.tile span {
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tile__size {
+  color: rgba(230, 234, 242, 0.7);
+  font-size: 10px;
+}

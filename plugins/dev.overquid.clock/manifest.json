@@ -1,9 +1,10 @@
 {
   "id": "dev.overquid.clock",
   "name": "Clock",
-  "version": "1.0.0",
+  "version": "1.1.0",
+  "description": "The time, with a stopwatch, timers and alarms.",
   "entry": "dist/index.html",
-  "panel": { "defaultSize": [200, 36], "position": "top-right" },
-  "permissions": [],
+  "panel": { "defaultSize": [300, 200], "position": "top-right" },
+  "permissions": ["storage", "notifications"],
   "network": []
 }

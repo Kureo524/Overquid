@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Files</title>
+    <script type="module" src="./src/main.ts"></script>
+  </head>
+  <body>
+    <div class="toolbar">
+      <button id="up" type="button" title="Parent folder" aria-label="Parent folder">↑</button>
+      <button id="home" type="button" title="Home" aria-label="Home">⌂</button>
+      <input id="path" class="path" spellcheck="false" aria-label="Path" />
+      <button id="new-folder" type="button">New folder</button>
+      <label class="check"><input id="hidden" type="checkbox" /> Hidden</label>
+    </div>
+    <p id="error" class="error" hidden></p>
+    <div class="head">
+      <button type="button" data-sort="name">Name</button>
+      <button type="button" data-sort="size">Size</button>
+      <button type="button" data-sort="modified">Modified</button>
+    </div>
+    <ul id="list" class="list"></ul>
+  </body>
+</html>

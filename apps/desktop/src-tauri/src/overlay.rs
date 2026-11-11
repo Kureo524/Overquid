@@ -11,11 +11,16 @@ use std::sync::Mutex;
 use serde::Serialize;
 use tauri::{Emitter, Runtime, WebviewWindow};
 
-use crate::cli::Command;
+use crate::cli::{Command, OverlaySwitch};
+use crate::shortcuts::{Action, Keymap};
 use crate::state::{self, Rect, Visibility};
 
 /// Event sent to the web view each time the visibility changes.
 pub const STATE_EVENT: &str = "overlay-state";
+/// Sent with a `cli::OverlaySwitch` to change the active overlay.
+pub const SWITCH_EVENT: &str = "overlay-switch";
+/// Sent when the shortcut that opens the settings is pressed.
+const SETTINGS_EVENT: &str = "open-settings";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -24,10 +29,29 @@ pub enum Mode {
     Fallback,
 }
 
+/// A screen the overlay can be placed on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MonitorInfo {
+    /// Stable across restarts: model and position.
+    pub id: String,
+    pub name: String,
+    pub width: i32,
+    pub height: i32,
+}
+
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct Status {
     pub mode: Mode,
     pub visibility: Visibility,
+}
+
+/// A see-through part of the overlay with another application's window
+/// underneath (ADR 0014): clicks there go to that window, except on `covers`,
+/// the panels in front.
+#[derive(Debug, Clone)]
+pub struct Cut {
+    pub rect: Rect,
+    pub covers: Vec<Rect>,
 }
 
 pub struct Overlay {
@@ -38,6 +62,17 @@ pub struct Overlay {
 struct Inner {
     visibility: Visibility,
     pinned: Vec<Rect>,
+    /// See-through areas, by the plugin that asked for them.
+    cuts: Vec<(String, Cut)>,
+    /// Whether the keyboard was last left to the windows under the cuts.
+    keyboard_shared: bool,
+    keymap: Keymap,
+    /// The screen the user chose (`MonitorInfo::id`); `None` lets the desktop choose.
+    monitor: Option<String>,
+    /// While a shortcut is being recorded, keys go to the page.
+    shortcuts_suspended: bool,
+    /// The shortcut held down, run once its key is released.
+    pressed: Option<Action>,
 }
 
 impl Overlay {
@@ -46,7 +81,7 @@ impl Overlay {
         let mode = platform_setup(window)?;
         #[cfg(target_os = "linux")]
         {
-            handle_escape(window)?;
+            handle_shortcuts(window)?;
             crate::web_panels::install(&window.gtk_window()?);
         }
         Ok(Self {
@@ -54,6 +89,12 @@ impl Overlay {
             inner: Mutex::new(Inner {
                 visibility: Visibility::Hidden,
                 pinned: Vec::new(),
+                cuts: Vec::new(),
+                keyboard_shared: false,
+                keymap: Keymap::default(),
+                monitor: None,
+                shortcuts_suspended: false,
+                pressed: None,
             }),
         })
     }
@@ -101,6 +142,22 @@ impl Overlay {
         })
     }
 
+    /// Sets or removes `owner`'s see-through area.
+    pub fn set_cut<R: Runtime>(
+        &self,
+        window: &WebviewWindow<R>,
+        owner: &str,
+        cut: Option<Cut>,
+    ) -> tauri::Result<()> {
+        self.transition(window, |inner| {
+            inner.cuts.retain(|(known, _)| known != owner);
+            if let Some(cut) = cut {
+                inner.cuts.push((owner.to_owned(), cut));
+            }
+            inner.visibility
+        })
+    }
+
     /// Hands the keyboard back to the app underneath while pinned.
     pub fn release_keyboard<R: Runtime>(&self, window: &WebviewWindow<R>) -> tauri::Result<()> {
         if self.mode == Mode::LayerShell && self.lock().visibility == Visibility::Pinned {
@@ -119,6 +176,40 @@ impl Overlay {
         }
     }
 
+    /// Moves the overlay to a screen. `None` gives the choice back to the desktop.
+    pub fn set_monitor<R: Runtime>(
+        &self,
+        window: &WebviewWindow<R>,
+        monitor: Option<String>,
+    ) -> tauri::Result<()> {
+        self.lock().monitor.clone_from(&monitor);
+        place_on_monitor(window, self.mode, monitor)
+    }
+
+    pub fn set_keymap(&self, keymap: Keymap) {
+        self.lock().keymap = keymap;
+    }
+
+    /// Stops reading shortcuts while one is being recorded.
+    pub fn suspend_shortcuts(&self, suspended: bool) {
+        let mut inner = self.lock();
+        inner.shortcuts_suspended = suspended;
+        inner.pressed = None;
+    }
+
+    fn run_action<R: Runtime>(
+        &self,
+        window: &WebviewWindow<R>,
+        action: Action,
+    ) -> tauri::Result<()> {
+        match action {
+            Action::Close => self.escape(window),
+            Action::NextOverlay => window.emit(SWITCH_EVENT, OverlaySwitch::Next),
+            Action::PreviousOverlay => window.emit(SWITCH_EVENT, OverlaySwitch::Prev),
+            Action::Settings => window.emit(SETTINGS_EVENT, ()),
+        }
+    }
+
     /// Applies `next` to the state, then renders the new visibility. Pinned
     /// rectangles are re-applied even when the visibility does not change.
     fn transition<R: Runtime>(
@@ -126,13 +217,23 @@ impl Overlay {
         window: &WebviewWindow<R>,
         next: impl FnOnce(&mut Inner) -> Visibility,
     ) -> tauri::Result<()> {
-        let (previous, visibility, pinned) = {
+        let (previous, visibility, pinned, cuts, newly_shared) = {
             let mut inner = self.lock();
             let previous = inner.visibility;
             inner.visibility = next(&mut inner);
-            (previous, inner.visibility, inner.pinned.clone())
+            let cuts: Vec<Cut> = inner.cuts.iter().map(|(_, cut)| cut.clone()).collect();
+            let shared = inner.visibility == Visibility::Summoned && !cuts.is_empty();
+            let newly_shared = shared && !inner.keyboard_shared;
+            inner.keyboard_shared = shared;
+            (
+                previous,
+                inner.visibility,
+                inner.pinned.clone(),
+                cuts,
+                newly_shared,
+            )
         };
-        self.render(window, previous, visibility, pinned)
+        self.render(window, previous, visibility, pinned, cuts, newly_shared)
     }
 
     fn render<R: Runtime>(
@@ -141,6 +242,8 @@ impl Overlay {
         previous: Visibility,
         visibility: Visibility,
         pinned: Vec<Rect>,
+        cuts: Vec<Cut>,
+        newly_shared: bool,
     ) -> tauri::Result<()> {
         match visibility {
             Visibility::Hidden => window.hide()?,
@@ -153,18 +256,24 @@ impl Overlay {
                         window.hide()?;
                     }
                 }
-                set_input_region(window, None)?;
+                // A window shown through the overlay must be able to take the
+                // keyboard when clicked: no exclusive hold while there is one.
+                let shared = !cuts.is_empty();
+                set_input_region(window, None, cuts)?;
                 window.show()?;
                 if self.mode == Mode::Fallback {
-                    cover_monitor(window)?;
+                    self.cover(window)?;
                     window.set_focus()?;
-                } else {
+                } else if !shared {
                     set_keyboard(window, Keyboard::Exclusive)?;
+                } else if newly_shared {
+                    set_keyboard(window, Keyboard::Release)?;
                 }
             }
             Visibility::Pinned => {
                 if self.mode == Mode::Fallback && previous == Visibility::Summoned {
                     remap_unfocused(window)?;
+                    self.cover(window)?;
                 } else if previous == Visibility::Hidden {
                     // Saved layout restored at startup.
                     if self.mode == Mode::Fallback {
@@ -172,12 +281,12 @@ impl Overlay {
                         // take the keyboard in fallback mode.
                         window.set_focusable(false)?;
                         window.show()?;
-                        cover_monitor(window)?;
+                        self.cover(window)?;
                     } else {
                         window.show()?;
                     }
                 }
-                set_input_region(window, Some(pinned))?;
+                set_input_region(window, Some(pinned), cuts)?;
                 // Coming from summoned, the overlay still holds the keyboard:
                 // give it back to the app underneath right away.
                 if self.mode == Mode::LayerShell && previous != Visibility::Pinned {
@@ -189,6 +298,12 @@ impl Overlay {
             window.emit(STATE_EVENT, visibility)?;
         }
         Ok(())
+    }
+
+    /// Fallback mode: sizes the window to its screen.
+    fn cover<R: Runtime>(&self, window: &WebviewWindow<R>) -> tauri::Result<()> {
+        let monitor = self.lock().monitor.clone();
+        place_on_monitor(window, Mode::Fallback, monitor)
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
@@ -209,37 +324,58 @@ fn platform_setup<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<Mode> 
     Ok(Mode::Fallback)
 }
 
-/// Escape is handled on the GTK window, before WebKit: a key typed while a
+/// Shortcuts are read on the GTK window, before WebKit: a key typed while a
 /// plugin's iframe has the focus never reaches the overlay's own page.
 ///
-/// Both press and release are consumed. Acting on the release matters:
+/// Both press and release are consumed, and the action runs on the release:
 /// hiding on the press unmaps the window before the release arrives (see the
-/// Escape fix in #11). Hiding the press from WebKit matters too: a press
-/// without its release leaves WebKit thinking Escape is still held.
+/// Escape fix in #11), and a press without its release leaves WebKit thinking
+/// the key is still held.
 #[cfg(target_os = "linux")]
-fn handle_escape<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<()> {
-    use gtk::gdk::keys::constants::Escape;
+fn handle_shortcuts<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<()> {
+    use gtk::gdk::ModifierType;
     use gtk::glib::Propagation;
     use gtk::prelude::*;
     use tauri::Manager;
 
+    use crate::shortcuts::Mods;
+
     let gtk_window = window.gtk_window()?;
-    gtk_window.connect_key_press_event(|_, event| {
-        if event.keyval() == Escape {
-            Propagation::Stop
-        } else {
-            Propagation::Proceed
+    let source = window.clone();
+    gtk_window.connect_key_press_event(move |_, event| {
+        let Some(overlay) = source.try_state::<Overlay>() else {
+            return Propagation::Proceed;
+        };
+        let state = event.state();
+        let mods = Mods {
+            ctrl: state.contains(ModifierType::CONTROL_MASK),
+            shift: state.contains(ModifierType::SHIFT_MASK),
+            alt: state.contains(ModifierType::MOD1_MASK),
+            logo: state.intersects(ModifierType::SUPER_MASK | ModifierType::MOD4_MASK),
+        };
+        let name = event.keyval().to_lower().name().unwrap_or_default();
+        let mut inner = overlay.lock();
+        if inner.shortcuts_suspended {
+            return Propagation::Proceed;
+        }
+        match inner.keymap.action(&name, mods) {
+            Some(action) => {
+                inner.pressed = Some(action);
+                Propagation::Stop
+            }
+            None => Propagation::Proceed,
         }
     });
     let target = window.clone();
-    gtk_window.connect_key_release_event(move |_, event| {
-        if event.keyval() != Escape {
+    gtk_window.connect_key_release_event(move |_, _| {
+        let Some(overlay) = target.try_state::<Overlay>() else {
             return Propagation::Proceed;
-        }
-        if let Some(overlay) = target.try_state::<Overlay>()
-            && let Err(error) = overlay.escape(&target)
-        {
-            eprintln!("overquid: Escape failed: {error}");
+        };
+        let Some(action) = overlay.lock().pressed.take() else {
+            return Propagation::Proceed;
+        };
+        if let Err(error) = overlay.run_action(&target, action) {
+            eprintln!("overquid: shortcut failed: {error}");
         }
         Propagation::Stop
     });
@@ -302,25 +438,49 @@ fn set_keyboard<R: Runtime>(window: &WebviewWindow<R>, keyboard: Keyboard) -> ta
 fn set_input_region<R: Runtime>(
     window: &WebviewWindow<R>,
     rects: Option<Vec<Rect>>,
+    cuts: Vec<Cut>,
 ) -> tauri::Result<()> {
     #[cfg(target_os = "linux")]
     return on_gtk_window(window, move |gtk_window| {
         use gtk::cairo::{RectangleInt, Region};
         use gtk::prelude::*;
-        let region = rects.map(|rects| {
-            let region = Region::create();
-            for (x, y, width, height) in rects.into_iter().filter_map(Rect::to_pixels) {
-                // Only fails on allocation failure; an incomplete region is
-                // still better than none.
-                let _ = region.union_rectangle(&RectangleInt::new(x, y, width, height));
+        if rects.is_none() && cuts.is_empty() {
+            gtk_window.input_shape_combine_region(None);
+            return;
+        }
+        // Only fails on allocation failure; an incomplete region is still
+        // better than none.
+        let rectangle = |(x, y, width, height)| RectangleInt::new(x, y, width, height);
+        let region = match rects {
+            Some(rects) => {
+                let region = Region::create();
+                for pixels in rects.into_iter().filter_map(Rect::to_pixels) {
+                    let _ = region.union_rectangle(&rectangle(pixels));
+                }
+                region
             }
-            region
-        });
-        gtk_window.input_shape_combine_region(region.as_ref());
+            None => Region::create_rectangle(&RectangleInt::new(
+                0,
+                0,
+                gtk_window.allocated_width(),
+                gtk_window.allocated_height(),
+            )),
+        };
+        for cut in cuts {
+            let Some(pixels) = cut.rect.to_pixels() else {
+                continue;
+            };
+            let hole = Region::create_rectangle(&rectangle(pixels));
+            for cover in cut.covers.into_iter().filter_map(Rect::to_pixels) {
+                let _ = hole.subtract_rectangle(&rectangle(cover));
+            }
+            let _ = region.subtract(&hole);
+        }
+        gtk_window.input_shape_combine_region(Some(&region));
     });
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (window, rects);
+        let _ = (window, rects, cuts);
         Ok(())
     }
 }
@@ -350,8 +510,135 @@ fn on_gtk_window<R: Runtime>(
 fn remap_unfocused<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<()> {
     window.set_focusable(false)?;
     window.hide()?;
-    window.show()?;
-    cover_monitor(window)
+    window.show()
+}
+
+/// Identifies a monitor across restarts (GTK 3 does not expose its connector).
+#[cfg(target_os = "linux")]
+fn monitor_id(monitor: &gtk::gdk::Monitor) -> String {
+    use gtk::prelude::*;
+    let box_ = monitor.geometry();
+    format!(
+        "{}:{}x{}+{}+{}",
+        monitor.model().unwrap_or_default(),
+        box_.width(),
+        box_.height(),
+        box_.x(),
+        box_.y()
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn gdk_monitors() -> Vec<gtk::gdk::Monitor> {
+    let Some(display) = gtk::gdk::Display::default() else {
+        return Vec::new();
+    };
+    (0..display.n_monitors())
+        .filter_map(|index| display.monitor(index))
+        .collect()
+}
+
+/// Screens the overlay can be placed on. Must run on the main thread.
+#[cfg(target_os = "linux")]
+pub fn monitors() -> Vec<MonitorInfo> {
+    use gtk::prelude::*;
+    gdk_monitors()
+        .iter()
+        .map(|monitor| {
+            let box_ = monitor.geometry();
+            MonitorInfo {
+                id: monitor_id(monitor),
+                name: monitor
+                    .model()
+                    .map(|model| model.to_string())
+                    .filter(|model| !model.is_empty())
+                    .unwrap_or_else(|| "Screen".to_owned()),
+                width: box_.width(),
+                height: box_.height(),
+            }
+        })
+        .collect()
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn monitors() -> Vec<MonitorInfo> {
+    Vec::new()
+}
+
+/// Puts the window on the chosen screen. A layer surface is remapped by GTK; a
+/// fallback window is sized to the screen (the current one if none is chosen).
+fn place_on_monitor<R: Runtime>(
+    window: &WebviewWindow<R>,
+    mode: Mode,
+    monitor: Option<String>,
+) -> tauri::Result<()> {
+    #[cfg(target_os = "linux")]
+    let target = window.clone();
+    #[cfg(target_os = "linux")]
+    return window.run_on_main_thread(move || {
+        let chosen = monitor.as_ref().and_then(|id| {
+            gdk_monitors()
+                .into_iter()
+                .find(|candidate| monitor_id(candidate) == *id)
+        });
+        if mode == Mode::LayerShell {
+            match target.gtk_window() {
+                Ok(gtk_window) => set_layer_monitor(&gtk_window, chosen.as_ref()),
+                Err(error) => eprintln!("overquid: no GTK window: {error}"),
+            }
+            return;
+        }
+        let placed = match &chosen {
+            Some(monitor) => cover_gdk_monitor(&target, monitor),
+            None => cover_monitor(&target),
+        };
+        if let Err(error) = placed {
+            eprintln!("overquid: cannot size the overlay: {error}");
+        }
+    });
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = monitor;
+        if mode == Mode::Fallback {
+            cover_monitor(window)?;
+        }
+        Ok(())
+    }
+}
+
+/// The binding only accepts a monitor; the C function also takes none, which
+/// gives the choice back to the compositor.
+#[cfg(target_os = "linux")]
+fn set_layer_monitor(window: &gtk::ApplicationWindow, monitor: Option<&gtk::gdk::Monitor>) {
+    use gtk::glib::translate::ToGlibPtr;
+    use gtk::prelude::*;
+    let window: &gtk::Window = window.upcast_ref();
+    // SAFETY: both pointers are valid for the call (or null for the monitor,
+    // which the function documents as "let the compositor choose").
+    unsafe {
+        gtk_layer_shell_sys::gtk_layer_set_monitor(
+            window.to_glib_none().0,
+            monitor.to_glib_none().0,
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn cover_gdk_monitor<R: Runtime>(
+    window: &WebviewWindow<R>,
+    monitor: &gtk::gdk::Monitor,
+) -> tauri::Result<()> {
+    use gtk::prelude::*;
+    let box_ = monitor.geometry();
+    let scale = monitor.scale_factor();
+    window.set_position(tauri::PhysicalPosition::new(
+        box_.x() * scale,
+        box_.y() * scale,
+    ))?;
+    window.set_size(tauri::PhysicalSize::new(
+        (box_.width() * scale) as u32,
+        (box_.height() * scale) as u32,
+    ))
 }
 
 /// Sizes the fallback window to its monitor. Layer-shell surfaces are sized by

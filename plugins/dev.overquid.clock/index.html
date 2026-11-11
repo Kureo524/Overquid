@@ -6,6 +6,54 @@
     <script type="module" src="./src/main.ts"></script>
   </head>
   <body>
-    <time id="time"></time>
+    <nav class="tabs" role="tablist">
+      <button type="button" role="tab" data-tab="clock" aria-selected="true">Clock</button>
+      <button type="button" role="tab" data-tab="stopwatch" aria-selected="false">Stopwatch</button>
+      <button type="button" role="tab" data-tab="timer" aria-selected="false">Timer</button>
+      <button type="button" role="tab" data-tab="alarms" aria-selected="false">Alarms</button>
+    </nav>
+    <div id="ringing" class="ringing" hidden>
+      <span id="ringing-text"></span>
+      <button id="dismiss" type="button">Dismiss</button>
+    </div>
+    <section data-view="clock">
+      <time id="time" class="big"></time>
+      <p id="date" class="dim"></p>
+    </section>
+    <section data-view="stopwatch" hidden>
+      <p id="stopwatch" class="big"></p>
+      <div class="row">
+        <button id="sw-toggle" type="button" class="primary">Start</button>
+        <button id="sw-lap" type="button">Lap</button>
+        <button id="sw-reset" type="button">Reset</button>
+      </div>
+      <ol id="laps" class="list"></ol>
+    </section>
+    <section data-view="timer" hidden>
+      <p id="timer" class="big"></p>
+      <div class="row" id="timer-setup">
+        <label>Min <input id="timer-min" type="number" min="0" max="999" value="5" /></label>
+        <label>Sec <input id="timer-sec" type="number" min="0" max="59" value="0" /></label>
+      </div>
+      <div class="row">
+        <button id="timer-toggle" type="button" class="primary">Start</button>
+        <button id="timer-reset" type="button">Reset</button>
+      </div>
+    </section>
+    <section data-view="alarms" hidden>
+      <div class="row">
+        <input id="alarm-time" type="time" aria-label="Alarm time" />
+        <input
+          id="alarm-label"
+          type="text"
+          maxlength="60"
+          placeholder="Label"
+          aria-label="Alarm label"
+        />
+        <button id="alarm-add" type="button" class="primary">Add</button>
+      </div>
+      <ul id="alarms" class="list"></ul>
+      <p id="alarms-empty" class="dim">No alarm set.</p>
+    </section>
   </body>
 </html>

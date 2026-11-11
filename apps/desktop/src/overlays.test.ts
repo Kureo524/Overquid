@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
 const {
+  removePluginPanels,
+  toggleKeep,
   activeOverlay,
   addPanels,
   createOverlay,
@@ -138,5 +140,38 @@ describe('apps', () => {
     const bound = toggleApp(two, 'work', 'org.vinegarhq.Sober');
     const value = JSON.parse(JSON.stringify(serializeOverlays(bound))) as unknown;
     expect(parseOverlays(value).overlays).toEqual(bound);
+  });
+});
+
+describe('removePluginPanels', () => {
+  it('drops every instance of a plugin, from every overlay', () => {
+    const panel = { placement: { h: 'left', v: 'top', dx: 0, dy: 0 }, pinned: false } as const;
+    const state = {
+      active: 'a',
+      overlays: [
+        { id: 'a', name: 'A', panels: { 'dev.x': panel, 'dev.x#2': panel, 'dev.xy': panel } },
+        { id: 'b', name: 'B', panels: { 'dev.x': panel } },
+      ],
+    };
+    const result = removePluginPanels(state, 'dev.x');
+    expect(Object.keys(result.overlays[0]?.panels ?? {})).toEqual(['dev.xy']);
+    expect(result.overlays[1]?.panels).toEqual({});
+  });
+});
+
+describe('toggleKeep', () => {
+  it('keeps the active overlay on screen, and stops', () => {
+    const state = {
+      active: 'a',
+      overlays: [
+        { id: 'a', name: 'A', panels: {} },
+        { id: 'b', name: 'B', panels: {} },
+      ],
+    };
+    const kept = toggleKeep(state);
+    expect(kept.overlays[0]?.keep).toBe(true);
+    expect(kept.overlays[1]?.keep).toBeUndefined();
+    expect(parseOverlays(serializeOverlays(kept)).overlays).toEqual(kept);
+    expect(toggleKeep(kept)).toEqual(state);
   });
 });

@@ -1,11 +1,16 @@
 mod active_app;
+mod apps;
+mod catalog;
 mod cli;
 mod content_filter;
+mod files;
 mod json_file;
 mod layout;
 mod overlay;
 mod plugin_storage;
 mod plugins;
+mod settings;
+mod shortcuts;
 mod state;
 mod web_panels;
 #[cfg(target_os = "linux")]
@@ -16,6 +21,7 @@ use tauri::{Emitter, Manager, Runtime, State, WebviewWindow};
 use cli::{CliError, Request};
 use layout::LayoutStore;
 use overlay::{Overlay, Status};
+use settings::SettingsStore;
 use state::Rect;
 
 const WINDOW: &str = "overlay";
@@ -36,6 +42,37 @@ fn set_pinned_regions<R: Runtime>(
     overlay.set_pinned(&window, rects, restore)
 }
 
+/// Shows the window of an application a plugin declares through the overlay,
+/// at `rect` (CSS pixels in the overlay window), or sends it away when `rect`
+/// is `None` (ADR 0014). `covers` are the panels in front of that area.
+#[tauri::command(async)]
+fn dock_window<R: Runtime>(
+    window: WebviewWindow<R>,
+    overlay: State<'_, Overlay>,
+    plugin_id: String,
+    app_id: String,
+    rect: Option<Rect>,
+    covers: Vec<Rect>,
+    workspace: Option<String>,
+) -> Result<(), String> {
+    let (_, manifest) = plugins::find(&plugin_roots(window.app_handle()), &plugin_id)
+        .ok_or_else(|| format!("unknown plugin '{plugin_id}'"))?;
+    if !manifest.apps.contains(&app_id) {
+        return Err(format!("'{app_id}' is not in the manifest's apps"));
+    }
+    let pixels = rect.and_then(Rect::to_pixels);
+    let placed = apps::dock(&app_id, pixels, workspace.as_deref());
+    // No hole in the overlay unless there is a window to see through it.
+    let cut = match (&placed, rect) {
+        (Ok(()), Some(rect)) if pixels.is_some() => Some(overlay::Cut { rect, covers }),
+        _ => None,
+    };
+    overlay
+        .set_cut(&window, &plugin_id, cut)
+        .map_err(|error| error.to_string())?;
+    placed
+}
+
 #[tauri::command(async)]
 fn load_layout(store: State<'_, LayoutStore>) -> Option<serde_json::Value> {
     store.load()
@@ -44,6 +81,19 @@ fn load_layout(store: State<'_, LayoutStore>) -> Option<serde_json::Value> {
 #[tauri::command(async)]
 fn save_layout(store: State<'_, LayoutStore>, layout: serde_json::Value) -> Result<(), String> {
     store.save(&layout)
+}
+
+#[tauri::command(async)]
+fn load_settings(store: State<'_, SettingsStore>) -> Option<serde_json::Value> {
+    store.load()
+}
+
+#[tauri::command(async)]
+fn save_settings(
+    store: State<'_, SettingsStore>,
+    settings: serde_json::Value,
+) -> Result<(), String> {
+    store.save(&settings)
 }
 
 /// Gives the keyboard back to the app underneath (pinned panels only).
@@ -112,6 +162,7 @@ fn web_panel<R: Runtime>(
             cache: base.join("cache"),
         };
         let pressed = events.clone();
+        let edge_events = events.clone();
         let id = panel_id.clone();
         let hooks = web_panels::Hooks {
             on_change: Box::new(move |page| {
@@ -119,6 +170,9 @@ fn web_panel<R: Runtime>(
             }),
             on_press: Box::new(move || {
                 let _ = pressed.emit(WEB_PANEL_PRESSED_EVENT, &id);
+            }),
+            on_edges: Box::new(move |edges| {
+                let _ = edge_events.emit(WEB_PANEL_EDGES_EVENT, edges);
             }),
         };
         let _ = tx.send(web_panels::place(
@@ -161,6 +215,9 @@ fn web_panel_close<R: Runtime>(app: tauri::AppHandle<R>, panel_id: String) -> Re
 /// Sent with the panel id when the user clicks in a web panel's page.
 const WEB_PANEL_PRESSED_EVENT: &str = "web-panel-pressed";
 
+/// Sent with a `web_panels::PageEdges` when a page's edge colours are read.
+const WEB_PANEL_EDGES_EVENT: &str = "web-panel-edges";
+
 /// Runs a browser button or address bar entry (ADR 0004).
 #[tauri::command(async)]
 fn web_navigate<R: Runtime>(
@@ -195,9 +252,61 @@ fn quit_on_signals<R: Runtime>(app: &tauri::AppHandle<R>) {
     }
 }
 
+/// A plugin the settings can manage.
+#[derive(serde::Serialize)]
+struct InstalledPlugin {
+    #[serde(flatten)]
+    manifest: plugins::Manifest,
+    /// In the user's folder: it can be removed.
+    removable: bool,
+}
+
 #[tauri::command(async)]
-fn list_plugins<R: Runtime>(app: tauri::AppHandle<R>) -> Vec<plugins::Manifest> {
-    plugins::list_all(&plugin_roots(&app))
+fn list_plugins<R: Runtime>(app: tauri::AppHandle<R>) -> Vec<InstalledPlugin> {
+    let roots = plugin_roots(&app);
+    plugins::list_all(&roots)
+        .into_iter()
+        .map(|manifest| {
+            let removable = roots
+                .first()
+                .is_some_and(|user| plugins::load_manifest(user, &manifest.id).is_some());
+            InstalledPlugin {
+                manifest,
+                removable,
+            }
+        })
+        .collect()
+}
+
+/// The folder plugins are installed to.
+fn user_plugins<R: Runtime>(app: &tauri::AppHandle<R>) -> Result<std::path::PathBuf, String> {
+    plugin_roots(app)
+        .into_iter()
+        .next()
+        .ok_or_else(|| "no folder for plugins".to_owned())
+}
+
+/// Plugins offered by the official catalog (ADR 0009).
+#[tauri::command(async)]
+fn plugin_catalog() -> Result<Vec<catalog::Entry>, String> {
+    catalog::fetch_index(&catalog::base_url(), &catalog::http_fetch)
+}
+
+/// Installs or updates a plugin from the catalog.
+#[tauri::command(async)]
+fn install_plugin<R: Runtime>(app: tauri::AppHandle<R>, id: String) -> Result<(), String> {
+    let base = catalog::base_url();
+    let entry = catalog::fetch_index(&base, &catalog::http_fetch)?
+        .into_iter()
+        .find(|entry| entry.manifest.id == id)
+        .ok_or_else(|| format!("'{id}' is not in the catalog"))?;
+    catalog::install(&user_plugins(&app)?, &base, &entry, &catalog::http_fetch)
+}
+
+/// Removes an installed plugin; its data stays, for a later reinstall.
+#[tauri::command(async)]
+fn uninstall_plugin<R: Runtime>(app: tauri::AppHandle<R>, id: String) -> Result<(), String> {
+    catalog::uninstall(&user_plugins(&app)?, &id)
 }
 
 /// Folders holding one sub-folder per plugin, by priority: the user's
@@ -417,14 +526,67 @@ fn active_app(last: State<'_, LastActiveApp>) -> Option<active_app::ActiveApp> {
     last.0.lock().ok().and_then(|app| app.clone())
 }
 
-/// Sent with a `cli::OverlaySwitch` for `overquid next|prev|switch NAME`.
-const OVERLAY_SWITCH_EVENT: &str = "overlay-switch";
+/// The global shortcut in effect (`None`: the desktop's own configuration).
+#[derive(Default)]
+struct GlobalShortcut(std::sync::Mutex<Option<shortcuts::Accel>>);
+
+/// Which desktop the global shortcut would be set up in.
+#[tauri::command]
+fn shortcut_desktop() -> shortcuts::Desktop {
+    shortcuts::detect_desktop()
+}
+
+/// Applies the settings' shortcuts, moving the global one if it changed.
+#[tauri::command(async)]
+fn set_shortcuts(
+    overlay: State<'_, Overlay>,
+    global: State<'_, GlobalShortcut>,
+    shortcuts: shortcuts::Shortcuts,
+) -> Result<(), String> {
+    overlay.set_keymap(shortcuts.keymap()?);
+    let next = shortcuts.toggle()?;
+    let mut current = global.0.lock().map_err(|error| error.to_string())?;
+    if *current != next {
+        shortcuts::apply_global(shortcuts::detect_desktop(), current.as_ref(), next.as_ref())?;
+        *current = next;
+    }
+    Ok(())
+}
+
+/// Screens the overlay can be placed on.
+#[tauri::command(async)]
+fn list_monitors<R: Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<Vec<overlay::MonitorInfo>, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(overlay::monitors());
+    })
+    .map_err(|error| error.to_string())?;
+    rx.recv().map_err(|error| error.to_string())
+}
+
+/// Places the overlay on a screen, or lets the desktop choose (`None`).
+#[tauri::command]
+fn set_overlay_monitor<R: Runtime>(
+    window: WebviewWindow<R>,
+    overlay: State<'_, Overlay>,
+    monitor: Option<String>,
+) -> tauri::Result<()> {
+    overlay.set_monitor(&window, monitor)
+}
+
+/// Lets keys reach the page while a new shortcut is being recorded.
+#[tauri::command]
+fn suspend_shortcuts(overlay: State<'_, Overlay>, suspended: bool) {
+    overlay.suspend_shortcuts(suspended);
+}
 
 fn apply<R: Runtime>(app: &tauri::AppHandle<R>, request: Request) {
     let command = match request {
         Request::Visibility(command) => command,
         Request::Overlay(switch) => {
-            if let Err(error) = app.emit(OVERLAY_SWITCH_EVENT, switch) {
+            if let Err(error) = app.emit(overlay::SWITCH_EVENT, switch) {
                 eprintln!("overquid: cannot switch overlay: {error}");
             }
             return;
@@ -470,6 +632,7 @@ pub fn run() {
                 .get_webview_window(WINDOW)
                 .expect("overlay window is declared in tauri.conf.json");
             app.manage(LayoutStore::new(&app.path().app_config_dir()?));
+            app.manage(SettingsStore::new(&app.path().app_config_dir()?));
             // Notifications: 5 per minute per plugin.
             app.manage(plugins::RateLimiter::new(
                 5,
@@ -494,12 +657,25 @@ pub fn run() {
             refresh_content_filter_lists(app.handle().clone());
             app.manage(LastActiveApp(std::sync::Mutex::new(None)));
             let handle = app.handle().clone();
-            active_app::watch(move |focused| {
-                if let Ok(mut last) = handle.state::<LastActiveApp>().0.lock() {
-                    *last = Some(focused.clone());
-                }
-                let _ = handle.emit(ACTIVE_APP_EVENT, focused);
-            });
+            let reloaded = app.handle().clone();
+            app.manage(GlobalShortcut::default());
+            active_app::watch(
+                move |focused| {
+                    if let Ok(mut last) = handle.state::<LastActiveApp>().0.lock() {
+                        *last = Some(focused.clone());
+                    }
+                    let _ = handle.emit(ACTIVE_APP_EVENT, focused);
+                },
+                move || {
+                    let global = reloaded.state::<GlobalShortcut>();
+                    let toggle = global.0.lock().ok().and_then(|toggle| toggle.clone());
+                    if let Some(toggle) = toggle
+                        && let Err(error) = shortcuts::reapply_global(&toggle)
+                    {
+                        eprintln!("overquid: cannot set the global shortcut again: {error}");
+                    }
+                },
+            );
             #[cfg(target_os = "linux")]
             quit_on_signals(app.handle());
             apply(app.handle(), command);
@@ -508,11 +684,22 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             overlay_status,
             set_pinned_regions,
+            dock_window,
             release_keyboard,
             load_layout,
             save_layout,
+            load_settings,
+            save_settings,
+            shortcut_desktop,
+            set_shortcuts,
+            suspend_shortcuts,
+            list_monitors,
+            set_overlay_monitor,
             plugin_call,
             list_plugins,
+            plugin_catalog,
+            install_plugin,
+            uninstall_plugin,
             web_panel,
             web_panel_close,
             web_navigate,

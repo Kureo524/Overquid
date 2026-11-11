@@ -1,3 +1,4 @@
+import { releaseDock, requestDock } from './dock';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { PROTOCOL, isCall, type EventMessage, type ReplyMessage } from '@overquid/sdk';
 
@@ -6,6 +7,8 @@ export interface PluginManifest {
   id: string;
   name: string;
   version: string;
+  /** One line about the plugin. */
+  description?: string;
   /** Iframe plugin: its entry file. Exactly one of `entry` and `web`. */
   entry?: string;
   /** Web panel: an official web app shown in a native view (ADR 0004). */
@@ -24,9 +27,38 @@ export interface PluginManifest {
   };
   permissions: string[];
   network: string[];
+  /** Desktop entries of the applications the plugin may start. */
+  apps?: string[];
 }
 
-export const listPlugins = () => invoke<PluginManifest[]>('list_plugins');
+/** A plugin on this machine. */
+export interface InstalledPlugin extends PluginManifest {
+  /** Installed by the user; plugins shipped with the app cannot be removed. */
+  removable: boolean;
+}
+
+export const listPlugins = () => invoke<InstalledPlugin[]>('list_plugins');
+
+/** A plugin offered by the official catalog (ADR 0009). */
+export interface CatalogEntry {
+  manifest: PluginManifest;
+}
+
+export const fetchCatalog = () => invoke<CatalogEntry[]>('plugin_catalog');
+export const installPlugin = (id: string) => invoke('install_plugin', { id });
+export const uninstallPlugin = (id: string) => invoke('uninstall_plugin', { id });
+
+/** Whether version `a` is newer than `b` (dotted numbers, the rest ignored). */
+export function isNewer(a: string, b: string): boolean {
+  const parts = (version: string) =>
+    version.split('.').map((part) => Number.parseInt(part, 10) || 0);
+  const [left, right] = [parts(a), parts(b)];
+  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
+    const difference = (left[i] ?? 0) - (right[i] ?? 0);
+    if (difference !== 0) return difference > 0;
+  }
+  return false;
+}
 
 /** URL of a plugin file. Built from Tauri's helper so it follows the platform
  * (`overquid-plugin://localhost/` on Linux, `http://overquid-plugin.localhost/`
@@ -44,6 +76,7 @@ export function pluginUrl(id: string, path: string): string {
  * nothing a plugin puts in its payload is used to identify it.
  */
 const frames = new Map<MessageEventSource, string>();
+let theme: Record<string, string> = {};
 
 // The iframe's origin is opaque ("null"): '*' is the only possible target,
 // and every message goes to one exact window.
@@ -52,12 +85,26 @@ const send = (frame: Window, message: ReplyMessage | EventMessage) =>
 
 export function registerFrame(frame: Window, pluginId: string): () => void {
   frames.set(frame, pluginId);
-  return () => frames.delete(frame);
+  return () => {
+    frames.delete(frame);
+    releaseDock(frame);
+  };
 }
 
 /** Tells a plugin whether its panel is on screen. */
 export function sendVisibility(frame: Window, visible: boolean) {
   send(frame, { overquid: PROTOCOL, event: visible ? 'show' : 'hide' });
+}
+
+/** Tells a plugin the overlay's colours; the SDK applies them to its page. */
+export function sendTheme(frame: Window) {
+  send(frame, { overquid: PROTOCOL, event: 'theme', tokens: theme });
+}
+
+/** Applies new colours to every plugin. */
+export function broadcastTheme(tokens: Record<string, string>) {
+  theme = tokens;
+  for (const frame of frames.keys()) sendTheme(frame as Window);
 }
 
 export function startBroker(): () => void {
@@ -66,7 +113,12 @@ export function startBroker(): () => void {
     const pluginId = source ? frames.get(source) : undefined;
     if (!source || !pluginId || !isCall(event.data)) return;
     const { id, method, args } = event.data;
-    invoke('plugin_call', { pluginId, method, args: args ?? null }).then(
+    // Needs the place of the plugin's panel, which only this page knows.
+    const answer =
+      method === 'apps.dock'
+        ? requestDock(source, pluginId, args)
+        : invoke('plugin_call', { pluginId, method, args: args ?? null });
+    answer.then(
       (result) => send(source, { overquid: PROTOCOL, id, result }),
       (error: unknown) => send(source, { overquid: PROTOCOL, id, error: String(error) }),
     );

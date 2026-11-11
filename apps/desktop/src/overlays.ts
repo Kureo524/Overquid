@@ -12,6 +12,8 @@ export interface Overlay {
   panels: Layout;
   /** Window classes of the apps that bring this overlay forward when they get the focus. */
   apps?: string[];
+  /** Every panel stays on screen when the overlay closes, as if all were pinned. */
+  keep?: boolean;
 }
 
 export interface Overlays {
@@ -64,6 +66,7 @@ export function parseOverlays(value: unknown): Loaded {
         ? entry.apps.filter((app): app is string => typeof app === 'string' && app.trim() !== '')
         : [];
       if (apps.length > 0) overlay.apps = apps;
+      if (entry.keep === true) overlay.keep = true;
       overlays.push(overlay);
     }
     if (overlays.length > 0) {
@@ -131,6 +134,35 @@ export function removePanel(state: Overlays, id: string): Overlays {
   return withPanels(state, (panels) =>
     Object.fromEntries(Object.entries(panels).filter(([panel]) => panel !== id)),
   );
+}
+
+/** Keeps every panel of the active overlay on screen when it closes, or stops. */
+export function toggleKeep(state: Overlays): Overlays {
+  const active = activeOverlay(state);
+  return {
+    ...state,
+    overlays: state.overlays.map((overlay) => {
+      if (overlay.id !== active.id) return overlay;
+      const next: Overlay = { ...overlay };
+      if (active.keep) delete next.keep;
+      else next.keep = true;
+      return next;
+    }),
+  };
+}
+
+/** Removes every panel of a plugin, from every overlay. */
+export function removePluginPanels(state: Overlays, pluginId: string): Overlays {
+  const belongs = (panel: string) => panel === pluginId || panel.startsWith(`${pluginId}#`);
+  return {
+    ...state,
+    overlays: state.overlays.map((overlay) => ({
+      ...overlay,
+      panels: Object.fromEntries(
+        Object.entries(overlay.panels).filter(([panel]) => !belongs(panel)),
+      ),
+    })),
+  };
 }
 
 /** The overlay `step` places after (or before) the active one, wrapping around. */
@@ -203,7 +235,8 @@ export function toggleApp(state: Overlays, id: string, app: string): Overlays {
     overlays: state.overlays.map((overlay) => {
       const others = (overlay.apps ?? []).filter((known) => !sameApp(known, app));
       const apps = overlay.id === id && !bound ? [...others, app] : others;
-      const next: Overlay = { id: overlay.id, name: overlay.name, panels: overlay.panels };
+      const next: Overlay = { ...overlay };
+      delete next.apps;
       if (apps.length > 0) next.apps = apps;
       return next;
     }),

@@ -4,6 +4,8 @@
   --veil: rgba(11, 12, 17, 0.38);
   --glass: rgba(20, 22, 30, 0.72);
   --surface: rgba(16, 18, 25, 0.84);
+  --solid: rgb(16, 18, 25);
+  --canvas: rgba(11, 12, 17, 0.8);
   --surface-raised: rgba(230, 234, 242, 0.06);
   --border: rgba(230, 234, 242, 0.08);
   --border-strong: rgba(230, 234, 242, 0.15);
@@ -13,7 +15,11 @@
   --text-3: #868a98;
   --hover: rgba(230, 234, 242, 0.05);
   --accent: #8fa4cc;
+  --accent-text: #adbfe0;
   --accent-soft: rgba(143, 164, 204, 0.14);
+  --accent-tint: rgba(143, 164, 204, 0.42);
+  --input: rgba(11, 12, 17, 0.7);
+  --danger: #d9646c;
   --font: 'Gothic A1', system-ui, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
   --font-num: 'Barlow Condensed', var(--font);
@@ -43,6 +49,20 @@ body {
   animation: appear 0.14s ease-out;
 }
 
+/* A window shown through the overlay (dock.ts): the dimming moves to an
+   element that can be cut around it. */
+.stage[data-docked] {
+  background: none;
+}
+
+.dock-veil {
+  position: fixed;
+  z-index: -1;
+  inset: 0;
+  background: var(--veil);
+  pointer-events: none;
+}
+
 .glass {
   position: relative;
   overflow: hidden;
@@ -59,13 +79,24 @@ body {
   position: absolute;
 }
 
+.panel--maximized {
+  border-color: transparent;
+  border-radius: 0;
+  background: var(--solid);
+  backdrop-filter: none;
+}
+
+.panel--maximized .panel__bar {
+  cursor: default;
+}
+
 .panel__bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   height: 32px;
-  padding: 0 6px 0 14px;
+  padding: 0 12px 0 14px; /* Room for the top-right resize corner. */
   background: var(--glass);
   border-bottom: 1px solid var(--border);
   cursor: grab;
@@ -76,6 +107,8 @@ body {
 }
 
 .panel__actions {
+  position: relative;
+  z-index: 2; /* Above the resize handles. */
   display: flex;
   align-items: center;
   gap: 6px;
@@ -157,11 +190,67 @@ kbd {
 }
 
 .web-slot {
+  position: relative;
   display: grid;
   place-items: center;
   width: 100%;
   border-radius: 10px;
-  background: var(--canvas, rgba(11, 12, 17, 0.8));
+  background: var(--canvas);
+}
+
+/*
+ * The panel's margin around a web page takes the colours of the page's edge,
+ * and dissolves outwards into the glass. Sizes: `.panel__body`'s padding.
+ */
+.web-edge {
+  position: absolute;
+  pointer-events: none;
+  --dissolve: #000, rgba(0, 0, 0, 0.72) 35%, rgba(0, 0, 0, 0.28) 70%, transparent;
+}
+
+.web-edge--top,
+.web-edge--bottom {
+  right: -16px;
+  left: -16px;
+  mask-composite: intersect;
+}
+
+.web-edge--top {
+  top: -14px;
+  height: 14px;
+  mask-image:
+    linear-gradient(to top, var(--dissolve)),
+    linear-gradient(to right, transparent, #000 16px, #000 calc(100% - 16px), transparent);
+}
+
+.web-edge--bottom {
+  bottom: -16px;
+  height: 16px;
+  mask-image:
+    linear-gradient(to bottom, var(--dissolve)),
+    linear-gradient(to right, transparent, #000 16px, #000 calc(100% - 16px), transparent);
+}
+
+.web-edge--left,
+.web-edge--right {
+  top: 0;
+  bottom: 0;
+  width: 16px;
+}
+
+.web-edge--left {
+  left: -16px;
+  mask-image: linear-gradient(to left, var(--dissolve));
+}
+
+.web-edge--right {
+  right: -16px;
+  mask-image: linear-gradient(to right, var(--dissolve));
+}
+
+/* A browser's address bar sits right above the page. */
+.browser .web-edge--top {
+  display: none;
 }
 
 .big-number {
@@ -192,26 +281,127 @@ kbd {
   height: 100%;
 }
 
-.panel__resize {
+/* Resize handles sit in the panel's padding: they never cover its content. */
+.panel__edge {
   position: absolute;
-  right: 0;
-  bottom: 0;
-  width: 18px;
-  height: 18px;
-  cursor: nwse-resize;
+  z-index: 1;
   touch-action: none;
 }
 
-.panel__resize::after {
+.panel__edge--n,
+.panel__edge--s {
+  right: 16px;
+  left: 16px;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.panel__edge--e,
+.panel__edge--w {
+  top: 16px;
+  bottom: 16px;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.panel__edge--n {
+  top: 0;
+}
+
+.panel__edge--s {
+  bottom: 0;
+}
+
+.panel__edge--e {
+  right: 0;
+}
+
+.panel__edge--w {
+  left: 0;
+}
+
+.panel__edge--ne,
+.panel__edge--nw,
+.panel__edge--se,
+.panel__edge--sw {
+  width: 16px;
+  height: 16px;
+}
+
+.panel__edge--nw {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+}
+
+.panel__edge--se {
+  right: 0;
+  bottom: 0;
+  cursor: nwse-resize;
+}
+
+.panel__edge--ne {
+  top: 0;
+  right: 0;
+  cursor: nesw-resize;
+}
+
+.panel__edge--sw {
+  bottom: 0;
+  left: 0;
+  cursor: nesw-resize;
+}
+
+/* The mark follows the panel's rounded corner; it shows when the pointer is near. */
+.panel__edge--ne::after,
+.panel__edge--nw::after,
+.panel__edge--se::after,
+.panel__edge--sw::after {
   content: '';
   position: absolute;
-  right: 6px;
-  bottom: 6px;
-  width: 6px;
-  height: 6px;
-  border-right: 1.5px solid var(--text-3);
-  border-bottom: 1.5px solid var(--text-3);
-  border-bottom-right-radius: 2px;
+  width: 12px;
+  height: 12px;
+  border: 0 solid var(--text-2);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.panel__edge[data-near]::after {
+  opacity: 1;
+}
+
+.panel__edge:hover::after,
+.panel__edge:active::after {
+  border-color: var(--accent);
+  opacity: 1;
+}
+
+.panel__edge--nw::after {
+  top: 3px;
+  left: 3px;
+  border-width: 1.5px 0 0 1.5px;
+  border-top-left-radius: 15px;
+}
+
+.panel__edge--ne::after {
+  top: 3px;
+  right: 3px;
+  border-width: 1.5px 1.5px 0 0;
+  border-top-right-radius: 15px;
+}
+
+.panel__edge--sw::after {
+  bottom: 3px;
+  left: 3px;
+  border-width: 0 0 1.5px 1.5px;
+  border-bottom-left-radius: 15px;
+}
+
+.panel__edge--se::after {
+  right: 3px;
+  bottom: 3px;
+  border-width: 0 1.5px 1.5px 0;
+  border-bottom-right-radius: 15px;
 }
 
 .icon-button:disabled {
@@ -371,4 +561,350 @@ kbd {
   width: 1px;
   height: 20px;
   background: var(--border-strong);
+}
+
+/* Settings: a large window of glass, one section at a time. */
+.settings {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  width: min(760px, calc(100% - 48px));
+  height: min(560px, calc(100% - 48px));
+  margin: auto;
+  border-radius: 22px;
+}
+
+.settings__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 10px;
+  background: var(--glass);
+  border-right: 1px solid var(--border);
+}
+
+.settings__title {
+  margin: 0 0 10px;
+  padding: 0 10px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.settings__tab {
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings__tab:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.settings__tab[aria-selected='true'] {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.settings__content {
+  position: relative;
+  min-width: 0;
+  padding: 18px 22px 22px;
+  overflow-y: auto;
+  user-select: text;
+}
+
+.settings__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+
+.settings__heading {
+  margin: 0 0 12px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.settings__heading:not(:first-child) {
+  margin-top: 22px;
+}
+
+.setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 40px;
+  padding: 6px 12px;
+  border-radius: 12px;
+}
+
+.setting:hover {
+  background: var(--hover);
+}
+
+.setting__label {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.setting__hint {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.setting__control {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.switch {
+  appearance: none;
+  position: relative;
+  width: 32px;
+  height: 18px;
+  margin: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--surface-raised);
+  cursor: pointer;
+  transition:
+    background-color 0.12s,
+    border-color 0.12s;
+}
+
+.switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-2);
+  transition: transform 0.12s;
+}
+
+.switch:checked {
+  border-color: transparent;
+  background: var(--accent-tint);
+}
+
+.switch:checked::after {
+  background: #fff;
+  transform: translateX(14px);
+}
+
+.slider {
+  width: 160px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.field {
+  width: 96px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--input);
+  color: var(--text);
+  font: 11px var(--font-mono);
+  outline: none;
+  transition: border-color 0.12s;
+}
+
+.field:focus {
+  border-color: var(--accent);
+}
+
+.btn {
+  height: 28px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-top-color: var(--rim);
+  border-left-color: var(--rim);
+  border-radius: 10px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  transition:
+    background-color 0.12s,
+    border-color 0.12s;
+}
+
+.btn:hover {
+  background: rgba(230, 234, 242, 0.1);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.btn--primary {
+  border-color: rgba(255, 255, 255, 0.28);
+  background: var(--accent-tint);
+  color: #fff;
+}
+
+.swatches {
+  display: flex;
+  gap: 6px;
+}
+
+.swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background-clip: padding-box;
+  outline: 1px solid var(--border-strong);
+  cursor: pointer;
+}
+
+.swatch[aria-pressed='true'] {
+  border-color: var(--text);
+}
+
+.segmented {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 14px;
+  background: var(--glass);
+}
+
+.segmented__item {
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  cursor: pointer;
+}
+
+.segmented__item:hover {
+  color: var(--text);
+}
+
+.segmented__item[aria-checked='true'] {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+/* Guides of a panel being snapped. */
+.snap-guide {
+  position: absolute;
+  z-index: 1400000;
+  background: var(--accent);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.snap-guide--x {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.snap-guide--y {
+  right: 0;
+  left: 0;
+  height: 1px;
+}
+
+.setting__keys {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+kbd.capture {
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.settings__note {
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--text-2);
+}
+
+.settings__error {
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  border: 1px solid rgba(217, 100, 108, 0.3);
+  border-radius: 12px;
+  background: rgba(217, 100, 108, 0.13);
+  color: var(--text);
+}
+
+.plugin-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 12px;
+  border-radius: 12px;
+}
+
+.plugin-row:hover {
+  background: var(--hover);
+}
+
+.plugin-row__info {
+  min-width: 0;
+}
+
+.plugin-row__name {
+  font-weight: 700;
+}
+
+.plugin-row__version {
+  margin-left: 6px;
+  color: var(--text-3);
+  font: 10px var(--font-mono);
+}
+
+.plugin-row__text {
+  margin: 2px 0 0;
+  color: var(--text-2);
+}
+
+.plugin-row__meta {
+  margin: 2px 0 0;
+  color: var(--text-3);
+  font: 10px var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.plugin-row__actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings__empty {
+  margin: 0;
+  padding: 8px 12px;
+  color: var(--text-3);
 }

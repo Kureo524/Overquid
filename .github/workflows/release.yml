@@ -72,6 +72,9 @@ jobs:
             target/release/bundle/deb/*.deb \
             target/release/bundle/rpm/*.rpm \
             --clobber
+          # The SDK and generator releases are created after the app's and
+          # would be "Latest"; the README's download link points there.
+          gh release edit "$TAG" --latest
 
   npm:
     name: npm packages
@@ -80,7 +83,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # npm provenance
+      # npm trusted publishing: GitHub's OIDC token proves to npm that this
+      # workflow of this repository publishes; no npm token is stored.
+      id-token: write
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -88,31 +93,19 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: pnpm
-          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm 11.5.1 or later; Node 22 ships npm 10.
+      - run: npm install --global npm@11
       - run: pnpm install --frozen-lockfile
-      # Without an NPM_TOKEN secret, publishing is skipped (with a warning):
-      # the release itself does not depend on npm. Re-run this job once the
-      # secret exists to publish the released versions.
-      - name: Check the npm token
-        id: npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "::warning::NPM_TOKEN is not set: npm packages were not published."
-            echo "token=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "token=true" >> "$GITHUB_OUTPUT"
-          fi
+      # pnpm pack applies publishConfig (the SDK's published exports); npm
+      # publishes the archive, as only npm does trusted publishing.
       - name: Publish @overquid/sdk
-        if: steps.npm.outputs.token == 'true' && needs.release-please.outputs.sdk == 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        if: needs.release-please.outputs.sdk == 'true'
         run: |
           pnpm --filter @overquid/sdk build
-          pnpm --filter @overquid/sdk publish --access public --provenance --no-git-checks
+          (cd packages/sdk && pnpm pack --pack-destination "$RUNNER_TEMP")
+          npm publish "$RUNNER_TEMP"/overquid-sdk-*.tgz --access public --provenance
       - name: Publish create-overlay-plugin
-        if: steps.npm.outputs.token == 'true' && needs.release-please.outputs.create == 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: pnpm --filter create-overlay-plugin publish --access public --provenance --no-git-checks
+        if: needs.release-please.outputs.create == 'true'
+        run: |
+          (cd packages/create-overlay-plugin && pnpm pack --pack-destination "$RUNNER_TEMP")
+          npm publish "$RUNNER_TEMP"/create-overlay-plugin-*.tgz --access public --provenance

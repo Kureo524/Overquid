@@ -22,6 +22,11 @@ interface OverlayBarProps {
   activeApp: string | null;
   /** Binds an app to an overlay, or unbinds it. */
   onToggleApp: (id: string, app: string) => void;
+  /** Opens or closes the settings. */
+  onSettings: () => void;
+  /** Whether the active overlay stays on screen when closed. */
+  kept: boolean;
+  onToggleKeep: () => void;
 }
 
 /** Tabs to switch between overlays, create, rename or delete them, and add panels (ADR 0006). */
@@ -36,6 +41,9 @@ export function OverlayBar({
   onAddPanel,
   activeApp,
   onToggleApp,
+  onSettings,
+  kept,
+  onToggleKeep,
 }: OverlayBarProps) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [menu, setMenu] = useState<{
@@ -184,6 +192,49 @@ export function OverlayBar({
           strokeLinejoin="round"
         >
           <path d="M8 1.8 13.2 3.8v4c0 3-2.2 5.3-5.2 6.4-3-1.1-5.2-3.4-5.2-6.4v-4Z" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        className="icon-button"
+        aria-label="Keep this overlay on screen"
+        aria-pressed={kept}
+        title="Keep this overlay on screen when it closes"
+        onClick={(event) => {
+          onToggleKeep();
+          event.currentTarget.blur();
+        }}
+      >
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+          <path
+            d="M9.8 1.8 14.2 6.2 12.4 6.9 10.2 9.1 10.6 12.3 9.6 13.3 6.9 10.6 3 14.5 1.5 13 5.4 9.1 2.7 6.4 3.7 5.4 6.9 5.8 9.1 3.6Z"
+            fill="currentColor"
+          />
+        </svg>
+      </button>
+      <button
+        type="button"
+        className="icon-button"
+        aria-label="Settings"
+        title="Settings"
+        onClick={(event) => {
+          onSettings();
+          event.currentTarget.blur();
+        }}
+      >
+        <svg
+          viewBox="0 0 16 16"
+          width="14"
+          height="14"
+          aria-hidden="true"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+        >
+          <path d="M2.5 4.5h6m3 0h2M2.5 11.5h2m3 0h6" />
+          <circle cx="10" cy="4.5" r="1.5" />
+          <circle cx="6" cy="11.5" r="1.5" />
         </svg>
       </button>
       {menu?.kind === 'filter' && (

@@ -20,7 +20,7 @@ body {
   color: #868a98;
 }
 .phase[data-phase='work'] {
-  color: #8fa4cc;
+  color: var(--accent, #8fa4cc);
 }
 .time {
   font:
@@ -48,6 +48,6 @@ button:hover {
   color: #e6eaf2;
 }
 #toggle {
-  background: rgba(143, 164, 204, 0.14);
-  color: #8fa4cc;
+  background: var(--accent-soft, rgba(143, 164, 204, 0.14));
+  color: var(--accent, #8fa4cc);
 }

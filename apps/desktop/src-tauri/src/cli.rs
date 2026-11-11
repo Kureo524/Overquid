@@ -23,7 +23,11 @@ pub enum Request {
 pub enum OverlaySwitch {
     Next,
     Prev,
-    Switch { name: String },
+    Switch {
+        name: String,
+    },
+    /// Keep the active overlay on screen when closed, or stop.
+    Keep,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,7 +67,8 @@ Commands:
   show           show the overlay
   hide           hide the overlay
   next, prev     go to the next or previous overlay
-  switch NAME    go to the overlay called NAME";
+  switch NAME    go to the overlay called NAME
+  keep           keep the current overlay on screen once closed, or stop";
 
 /// Parses the arguments that follow the program name.
 pub fn parse<I, S>(args: I) -> Result<Request, CliError>
@@ -80,6 +85,7 @@ where
             "hide" => Request::Visibility(Command::Hide),
             "next" => Request::Overlay(OverlaySwitch::Next),
             "prev" => Request::Overlay(OverlaySwitch::Prev),
+            "keep" => Request::Overlay(OverlaySwitch::Keep),
             "switch" => {
                 let name = args.next().ok_or(CliError::MissingName)?;
                 let name = name.as_ref().trim();
@@ -120,6 +126,7 @@ mod tests {
         assert_eq!(parse(["hide"]), visibility(Command::Hide));
         assert_eq!(parse(["next"]), Ok(Request::Overlay(OverlaySwitch::Next)));
         assert_eq!(parse(["prev"]), Ok(Request::Overlay(OverlaySwitch::Prev)));
+        assert_eq!(parse(["keep"]), Ok(Request::Overlay(OverlaySwitch::Keep)));
         assert_eq!(
             parse(["switch", " Gaming "]),
             Ok(Request::Overlay(OverlaySwitch::Switch {

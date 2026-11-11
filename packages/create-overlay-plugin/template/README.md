@@ -19,4 +19,4 @@ Restart Overquid, then "Add panel" → {{name}}.
   them.
 - The plugin runs in a sandboxed frame: no system access, no `localStorage`. Use the SDK (`@overquid/sdk`):
   `onShow`/`onHide`, `storage`, `notify`… See the SDK's README for the list and the permissions they need.
-- Network requests are only allowed to the host names listed in `network`.
+- Network requests (`fetch`, `WebSocket`) are only allowed to the hosts listed in `network`, over `https` and `wss`.
