@@ -5,8 +5,10 @@
 //! comes from that entry; a plugin only adds arguments, and nothing goes
 //! through a shell it controls.
 
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::Mutex;
 
 use serde_json::{Value, json};
 
@@ -161,33 +163,124 @@ fn launch(command: &[String], workspace: Option<&str>) -> Result<(), String> {
 /// Where a docked window goes when it leaves the overlay.
 const DEFAULT_DOCK_WORKSPACE: &str = "special:overquid";
 
-/// The Lua steps placing `app`'s window at `rect` (x, y, width, height on
-/// screen) on the current workspace, or sending it to `workspace` when `rect`
-/// is `None`. Nothing takes the focus. The window is moved in a step of its
-/// own: resizing keeps its centre, and it may refuse to get that small.
-pub fn dock_script(app: &str, rect: Option<(i32, i32, i32, i32)>, workspace: &str) -> Vec<String> {
-    let window = format!("class:{app}");
-    let step = |dispatcher: String| format!("hl.dispatch(hl.dsp.window.{dispatcher})");
-    match rect {
-        None => vec![step(format!(
-            "move({{window=\"{window}\", workspace=\"{workspace}\", follow=false}})"
-        ))],
-        Some((x, y, width, height)) => vec![
-            [
-                step(format!("float({{action=\"on\", window=\"{window}\"}})")),
-                step(format!(
-                    "move({{window=\"{window}\", workspace=\"e+0\", follow=false}})"
-                )),
-                step(format!(
-                    "resize({{window=\"{window}\", x={width}, y={height}}})"
-                )),
-            ]
-            .join("; "),
-            step(format!(
-                "move({{window=\"{window}\", x={x}, y={y}, relative=false}})"
-            )),
-        ],
-    }
+/// A rectangle in pixels: x, y, width, height.
+pub type Pixels = (i32, i32, i32, i32);
+
+/// A window shown through the overlay (ADR 0014).
+struct Docked {
+    app: String,
+    /// Hyprland's address of the application's main window.
+    address: String,
+    pid: i64,
+    /// Corner of the overlay's screen: the overlay's pixels start there.
+    origin: (i32, i32),
+    size: (i32, i32),
+    /// Windows that were already open when the window was docked.
+    known: HashSet<String>,
+    /// The application's other windows on screen, in the overlay's pixels.
+    extras: Vec<Pixels>,
+}
+
+/// The docked windows, by the plugin that asked for them.
+#[derive(Default)]
+pub struct Docks(Mutex<HashMap<String, Docked>>);
+
+/// One window as `hyprctl clients -j` describes it.
+struct Client {
+    address: String,
+    class: String,
+    pid: i64,
+    workspace: String,
+    at: (i32, i32),
+    size: (i32, i32),
+}
+
+fn clients() -> Vec<Client> {
+    let pair = |value: &Value| -> Option<(i32, i32)> {
+        let list = value.as_array()?;
+        Some((
+            list.first()?.as_i64()? as i32,
+            list.get(1)?.as_i64()? as i32,
+        ))
+    };
+    hyprctl_json("clients")
+        .and_then(|clients| {
+            Some(
+                clients
+                    .as_array()?
+                    .iter()
+                    .filter_map(|client| {
+                        Some(Client {
+                            address: client.get("address")?.as_str()?.to_owned(),
+                            class: client.get("class")?.as_str()?.to_owned(),
+                            pid: client.get("pid")?.as_i64()?,
+                            workspace: client.get("workspace")?.get("name")?.as_str()?.to_owned(),
+                            at: pair(client.get("at")?)?,
+                            size: pair(client.get("size")?)?,
+                        })
+                    })
+                    .collect(),
+            )
+        })
+        .unwrap_or_default()
+}
+
+fn step(dispatcher: String) -> String {
+    format!("hl.dispatch(hl.dsp.window.{dispatcher})")
+}
+
+/// Lua moving the window at `address` to a workspace without going there.
+fn send_script(address: &str, workspace: &str) -> String {
+    step(format!(
+        "move({{window=\"address:{address}\", workspace=\"{workspace}\", follow=false}})"
+    ))
+}
+
+/// Lua putting the window at a place on screen, and giving it a size first
+/// when `size` is set. Moving comes last: resizing keeps the centre.
+pub fn place_script(address: &str, at: (i32, i32), size: Option<(i32, i32)>) -> String {
+    let window = format!("address:{address}");
+    let resize = size.map(|(width, height)| {
+        step(format!(
+            "resize({{window=\"{window}\", x={width}, y={height}}})"
+        ))
+    });
+    let moved = step(format!(
+        "move({{window=\"{window}\", x={}, y={}, relative=false}})",
+        at.0, at.1
+    ));
+    resize
+        .into_iter()
+        .chain([moved])
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// Lua run once when a window is docked: floating, without the compositor's
+/// animation (it has to follow a panel being dragged), on the current workspace.
+fn adopt_script(address: &str) -> String {
+    let window = format!("address:{address}");
+    [
+        step(format!("float({{action=\"on\", window=\"{window}\"}})")),
+        step(format!(
+            "set_prop({{prop=\"no_anim\", value=\"true\", window=\"{window}\"}})"
+        )),
+        send_script(address, "e+0"),
+    ]
+    .join("; ")
+}
+
+/// The application's other windows to show through the overlay: its own, and
+/// any window that opened since it was docked (a dialog, the screen picker).
+fn companions<'a>(docked: &Docked, clients: &'a [Client], workspace: &str) -> Vec<&'a Client> {
+    clients
+        .iter()
+        .filter(|client| {
+            client.address != docked.address
+                && client.workspace == workspace
+                && (client.pid == docked.pid || !docked.known.contains(&client.address))
+        })
+        .collect()
 }
 
 fn hyprctl_json(what: &str) -> Option<Value> {
@@ -195,54 +288,163 @@ fn hyprctl_json(what: &str) -> Option<Value> {
     serde_json::from_slice(&output.stdout).ok()
 }
 
-/// Puts `app`'s window under the overlay at `rect` (in the overlay's pixels),
-/// or away on `workspace` (ADR 0014). Hyprland only.
-pub fn dock(
-    app: &str,
-    rect: Option<(i32, i32, i32, i32)>,
-    workspace: Option<&str>,
-) -> Result<(), String> {
-    let workspace = workspace.unwrap_or(DEFAULT_DOCK_WORKSPACE);
-    if !is_valid_app(app) || !is_valid_workspace(workspace) {
-        return Err("not an application or a workspace name".into());
+fn eval(script: &str) -> Result<(), String> {
+    if hyprctl(&["eval", script]) {
+        Ok(())
+    } else {
+        Err("Hyprland refused to move the window".into())
     }
-    if !on_hyprland() {
-        return Err("showing a window in a panel needs Hyprland".into());
-    }
-    let has_window = hyprctl_json("clients")
-        .and_then(|clients| {
-            Some(
-                clients
+}
+
+impl Docks {
+    /// Puts `app`'s main window under the overlay at `rect` (in the overlay's
+    /// pixels), or away on `workspace` when `rect` is `None` (ADR 0014).
+    /// Returns where the application's other windows are, to be shown too.
+    /// `refresh` looks at the windows again; without it a known window is
+    /// only moved, which is all a panel being dragged needs. Hyprland only.
+    pub fn dock(
+        &self,
+        owner: &str,
+        app: &str,
+        rect: Option<Pixels>,
+        workspace: Option<&str>,
+        refresh: bool,
+    ) -> Result<Vec<Pixels>, String> {
+        let workspace = workspace.unwrap_or(DEFAULT_DOCK_WORKSPACE);
+        if !is_valid_app(app) || !is_valid_workspace(workspace) {
+            return Err("not an application or a workspace name".into());
+        }
+        if !on_hyprland() {
+            return Err("showing a window in a panel needs Hyprland".into());
+        }
+        let mut docks = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let Some((x, y, width, height)) = rect else {
+            let all = clients();
+            let (address, pid) = match docks.remove(owner) {
+                Some(docked) => (Some(docked.address), Some(docked.pid)),
+                // Not docked by this run of the overlay: still put it away.
+                None => {
+                    let main = main_window(&all, app);
+                    (
+                        main.map(|main| main.address.clone()),
+                        main.map(|main| main.pid),
+                    )
+                }
+            };
+            // Its dialogs leave with it, and come back with it.
+            for client in &all {
+                let leaves = Some(&client.address) == address.as_ref()
+                    || (Some(client.pid) == pid && client.class == app);
+                if leaves && client.workspace != workspace {
+                    eval(&send_script(&client.address, workspace))?;
+                }
+            }
+            return Ok(Vec::new());
+        };
+
+        if let Some(docked) = docks.get_mut(owner).filter(|docked| docked.app == app)
+            && !refresh
+        {
+            let size = ((width, height) != docked.size).then_some((width, height));
+            docked.size = (width, height);
+            let at = (x + docked.origin.0, y + docked.origin.1);
+            eval(&place_script(&docked.address, at, size))?;
+            return Ok(docked.extras.clone());
+        }
+
+        let all = clients();
+        let active = hyprctl_json("activeworkspace")
+            .and_then(|active| Some(active.get("name")?.as_str()?.to_owned()))
+            .unwrap_or_default();
+        if let Some(docked) = docks.get_mut(owner).filter(|docked| docked.app == app) {
+            if !all.iter().any(|client| client.address == docked.address) {
+                docks.remove(owner);
+                return Err(format!("{app} closed its window"));
+            }
+            let origin = docked.origin;
+            docked.extras = companions(docked, &all, &active)
+                .into_iter()
+                .map(|client| {
+                    (
+                        client.at.0 - origin.0,
+                        client.at.1 - origin.1,
+                        client.size.0,
+                        client.size.1,
+                    )
+                })
+                .collect();
+            let size = ((width, height) != docked.size).then_some((width, height));
+            docked.size = (width, height);
+            eval(&place_script(
+                &docked.address,
+                (x + origin.0, y + origin.1),
+                size,
+            ))?;
+            return Ok(docked.extras.clone());
+        }
+
+        let main = main_window(&all, app).ok_or(format!("{app} has no window"))?;
+        // The overlay covers the focused screen: its pixels start at that screen's corner.
+        let origin = hyprctl_json("monitors")
+            .and_then(|monitors| {
+                let monitor = monitors
                     .as_array()?
                     .iter()
-                    .any(|client| client.get("class").and_then(Value::as_str) == Some(app)),
-            )
-        })
-        .unwrap_or(false);
-    if !has_window {
-        return Err(format!("{app} has no window"));
-    }
-    // The overlay covers the focused screen: its pixels start at that screen's corner.
-    let origin = hyprctl_json("monitors")
-        .and_then(|monitors| {
-            let monitor = monitors
-                .as_array()?
-                .iter()
-                .find(|monitor| monitor.get("focused") == Some(&Value::Bool(true)))?
-                .clone();
-            Some((
-                monitor.get("x")?.as_i64()? as i32,
-                monitor.get("y")?.as_i64()? as i32,
-            ))
-        })
-        .unwrap_or((0, 0));
-    let rect = rect.map(|(x, y, width, height)| (x + origin.0, y + origin.1, width, height));
-    for script in dock_script(app, rect, workspace) {
-        if !hyprctl(&["eval", &script]) {
-            return Err("Hyprland refused to move the window".into());
+                    .find(|monitor| monitor.get("focused") == Some(&Value::Bool(true)))?
+                    .clone();
+                Some((
+                    monitor.get("x")?.as_i64()? as i32,
+                    monitor.get("y")?.as_i64()? as i32,
+                ))
+            })
+            .unwrap_or((0, 0));
+        eval(&adopt_script(&main.address))?;
+        // The dialogs that left with it.
+        for client in &all {
+            if client.address != main.address
+                && client.pid == main.pid
+                && client.class == app
+                && client.workspace == workspace
+            {
+                eval(&send_script(&client.address, "e+0"))?;
+            }
         }
+        // Two steps: the window may refuse the size, and resizing is centred.
+        eval(&place_script(
+            &main.address,
+            (x + origin.0, y + origin.1),
+            Some((width, height)),
+        ))?;
+        eval(&place_script(
+            &main.address,
+            (x + origin.0, y + origin.1),
+            None,
+        ))?;
+        docks.insert(
+            owner.to_owned(),
+            Docked {
+                app: app.to_owned(),
+                address: main.address.clone(),
+                pid: main.pid,
+                origin,
+                size: (width, height),
+                known: all.iter().map(|client| client.address.clone()).collect(),
+                extras: Vec::new(),
+            },
+        );
+        Ok(Vec::new())
     }
-    Ok(())
+}
+
+/// The application's main window: the largest one of its class.
+fn main_window<'a>(clients: &'a [Client], app: &str) -> Option<&'a Client> {
+    clients
+        .iter()
+        .filter(|client| client.class == app)
+        .max_by_key(|client| i64::from(client.size.0) * i64::from(client.size.1))
 }
 
 fn arguments(args: &Value) -> Result<Vec<String>, String> {
@@ -345,25 +547,70 @@ mod tests {
         assert!(arguments(&json!({ "args": vec!["a"; MAX_ARGS + 1] })).is_err());
     }
 
+    fn client(address: &str, class: &str, pid: i64, workspace: &str, size: (i32, i32)) -> Client {
+        Client {
+            address: address.to_owned(),
+            class: class.to_owned(),
+            pid,
+            workspace: workspace.to_owned(),
+            at: (100, 50),
+            size,
+        }
+    }
+
     #[test]
-    fn docking_floats_places_and_sends_away() {
+    fn docking_talks_to_one_window_by_address() {
         assert_eq!(
-            dock_script("com.example.App", Some((10, 20, 300, 200)), "special:x"),
-            [
-                "hl.dispatch(hl.dsp.window.float({action=\"on\", window=\"class:com.example.App\"})); \
-                 hl.dispatch(hl.dsp.window.move({window=\"class:com.example.App\", workspace=\"e+0\", follow=false})); \
-                 hl.dispatch(hl.dsp.window.resize({window=\"class:com.example.App\", x=300, y=200}))",
-                "hl.dispatch(hl.dsp.window.move({window=\"class:com.example.App\", x=10, y=20, relative=false}))"
-            ]
+            place_script("0xabc", (10, 20), Some((300, 200))),
+            "hl.dispatch(hl.dsp.window.resize({window=\"address:0xabc\", x=300, y=200})); \
+             hl.dispatch(hl.dsp.window.move({window=\"address:0xabc\", x=10, y=20, relative=false}))"
+        );
+        // A panel being dragged: one move, nothing else.
+        assert_eq!(
+            place_script("0xabc", (10, 20), None),
+            "hl.dispatch(hl.dsp.window.move({window=\"address:0xabc\", x=10, y=20, relative=false}))"
         );
         assert_eq!(
-            dock_script("com.example.App", None, "special:x"),
-            [
-                "hl.dispatch(hl.dsp.window.move({window=\"class:com.example.App\", workspace=\"special:x\", follow=false}))"
-            ]
+            send_script("0xabc", "special:x"),
+            "hl.dispatch(hl.dsp.window.move({window=\"address:0xabc\", workspace=\"special:x\", follow=false}))"
         );
-        assert!(dock("../x", None, None).is_err());
-        assert!(dock("com.example.App", None, Some("1; rm")).is_err());
+        assert!(adopt_script("0xabc").contains("no_anim"));
+        let docks = Docks::default();
+        assert!(docks.dock("p", "../x", None, None, false).is_err());
+        assert!(
+            docks
+                .dock("p", "com.example.App", None, Some("1; rm"), false)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn the_main_window_is_the_largest_and_dialogs_follow() {
+        let all = [
+            client("0x1", "com.example.App", 7, "2", (400, 300)),
+            client("0x2", "com.example.App", 7, "2", (900, 600)),
+            client("0x3", "picker", 9, "2", (300, 200)),
+            client("0x4", "other", 5, "2", (300, 200)),
+            client("0x5", "picker", 9, "3", (300, 200)),
+        ];
+        let main = main_window(&all, "com.example.App").unwrap();
+        assert_eq!(main.address, "0x2");
+        let docked = Docked {
+            app: "com.example.App".into(),
+            address: "0x2".into(),
+            pid: 7,
+            origin: (0, 0),
+            size: (900, 600),
+            // Open before docking: 0x4 is somebody else's window.
+            known: ["0x1", "0x2", "0x4"].map(String::from).into(),
+            extras: Vec::new(),
+        };
+        let shown: Vec<&str> = companions(&docked, &all, "2")
+            .into_iter()
+            .map(|client| client.address.as_str())
+            .collect();
+        // Its own dialog, and the picker that opened since; not the other screen's.
+        assert_eq!(shown, ["0x1", "0x3"]);
     }
 
     #[test]
