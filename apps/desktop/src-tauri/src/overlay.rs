@@ -48,7 +48,7 @@ pub struct Status {
 /// A see-through part of the overlay with another application's window
 /// underneath (ADR 0014): clicks there go to that window, except on `covers`,
 /// the panels in front.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Cut {
     pub rect: Rect,
     pub covers: Vec<Rect>,
@@ -142,18 +142,30 @@ impl Overlay {
         })
     }
 
-    /// Sets or removes `owner`'s see-through area.
-    pub fn set_cut<R: Runtime>(
+    /// Sets `owner`'s see-through areas; none removes them. Nothing is
+    /// rendered again when they have not changed.
+    pub fn set_cuts<R: Runtime>(
         &self,
         window: &WebviewWindow<R>,
         owner: &str,
-        cut: Option<Cut>,
+        cuts: Vec<Cut>,
     ) -> tauri::Result<()> {
+        {
+            let inner = self.lock();
+            let current = inner
+                .cuts
+                .iter()
+                .filter(|(known, _)| known == owner)
+                .map(|(_, cut)| cut);
+            if current.eq(cuts.iter()) {
+                return Ok(());
+            }
+        }
         self.transition(window, |inner| {
             inner.cuts.retain(|(known, _)| known != owner);
-            if let Some(cut) = cut {
-                inner.cuts.push((owner.to_owned(), cut));
-            }
+            inner
+                .cuts
+                .extend(cuts.into_iter().map(|cut| (owner.to_owned(), cut)));
             inner.visibility
         })
     }

@@ -45,32 +45,52 @@ fn set_pinned_regions<R: Runtime>(
 /// Shows the window of an application a plugin declares through the overlay,
 /// at `rect` (CSS pixels in the overlay window), or sends it away when `rect`
 /// is `None` (ADR 0014). `covers` are the panels in front of that area.
+/// Returns where the application's other windows are (dialogs, a screen
+/// picker): the overlay opens for them too. `refresh` looks for them again.
 #[tauri::command(async)]
+#[allow(clippy::too_many_arguments)]
 fn dock_window<R: Runtime>(
     window: WebviewWindow<R>,
     overlay: State<'_, Overlay>,
+    docks: State<'_, apps::Docks>,
     plugin_id: String,
     app_id: String,
     rect: Option<Rect>,
     covers: Vec<Rect>,
     workspace: Option<String>,
-) -> Result<(), String> {
+    refresh: bool,
+) -> Result<Vec<[i32; 4]>, String> {
     let (_, manifest) = plugins::find(&plugin_roots(window.app_handle()), &plugin_id)
         .ok_or_else(|| format!("unknown plugin '{plugin_id}'"))?;
     if !manifest.apps.contains(&app_id) {
         return Err(format!("'{app_id}' is not in the manifest's apps"));
     }
     let pixels = rect.and_then(Rect::to_pixels);
-    let placed = apps::dock(&app_id, pixels, workspace.as_deref());
+    let placed = docks.dock(&plugin_id, &app_id, pixels, workspace.as_deref(), refresh);
     // No hole in the overlay unless there is a window to see through it.
-    let cut = match (&placed, rect) {
-        (Ok(()), Some(rect)) if pixels.is_some() => Some(overlay::Cut { rect, covers }),
-        _ => None,
-    };
+    let mut cuts = Vec::new();
+    if let (Ok(extras), Some(rect), Some(_)) = (&placed, rect, pixels) {
+        cuts.push(overlay::Cut { rect, covers });
+        // Dialogs are in front of everything: no panel covers them.
+        cuts.extend(extras.iter().map(|&(x, y, width, height)| overlay::Cut {
+            rect: Rect {
+                x: f64::from(x),
+                y: f64::from(y),
+                width: f64::from(width),
+                height: f64::from(height),
+            },
+            covers: Vec::new(),
+        }));
+    }
     overlay
-        .set_cut(&window, &plugin_id, cut)
+        .set_cuts(&window, &plugin_id, cuts)
         .map_err(|error| error.to_string())?;
-    placed
+    placed.map(|extras| {
+        extras
+            .into_iter()
+            .map(|(x, y, width, height)| [x, y, width, height])
+            .collect()
+    })
 }
 
 #[tauri::command(async)]
@@ -659,6 +679,7 @@ pub fn run() {
             let handle = app.handle().clone();
             let reloaded = app.handle().clone();
             app.manage(GlobalShortcut::default());
+            app.manage(apps::Docks::default());
             active_app::watch(
                 move |focused| {
                     if let Ok(mut last) = handle.state::<LastActiveApp>().0.lock() {
