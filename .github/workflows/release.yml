@@ -23,7 +23,7 @@ jobs:
       sdk: ${{ steps.release.outputs['packages/sdk--release_created'] }}
       create: ${{ steps.release.outputs['packages/create-overlay-plugin--release_created'] }}
     steps:
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@v5
         id: release
         with:
           # A personal token: pull requests opened with the default
